@@ -15,7 +15,7 @@
 import type { BlindLevel, Bullet, ResultEntryInput, TournamentStatus } from '../shared/types.ts';
 import { config } from './config.ts';
 import { closeDb, db, tx } from './db.ts';
-import { runMigrations } from './migrate.ts';
+import { assertSchemaUpToDate } from './migrate.ts';
 import * as repo from './repo.ts';
 import type { PlayerRow } from './repo.ts';
 import { publishResults, seatPlayers } from './services/tournaments.ts';
@@ -298,7 +298,7 @@ function safeDbUrl(url: string): string {
 
 console.log(`[seed] база: ${safeDbUrl(config.databaseUrl)}`);
 try {
-  await runMigrations();
+  await assertSchemaUpToDate();
   await tx(seed);
 } catch (err) {
   console.error('[seed] ошибка:', err);

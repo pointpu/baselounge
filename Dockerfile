@@ -18,6 +18,15 @@ WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev --no-audit --no-fund && npm cache clean --force
 
+# ---------- goose: миграции схемы (запускается initContainer'ом в Kubernetes) ----------
+# Бинарник фиксированной версии с проверкой контрольной суммы из релиза pressly/goose.
+FROM node:26-alpine AS goose
+ARG GOOSE_VERSION=v3.29.0
+ARG GOOSE_SHA256=cc56e2f75532a4dd52f5ef2d31db0121e91079a9c2617bc0ad4e04e2d41c228b
+RUN wget -q -O /goose "https://github.com/pressly/goose/releases/download/${GOOSE_VERSION}/goose_linux_x86_64" \
+ && echo "${GOOSE_SHA256}  /goose" | sha256sum -c - \
+ && chmod 0755 /goose
+
 # ---------- Рантайм ----------
 FROM node:26-alpine AS runtime
 ENV NODE_ENV=production \
@@ -31,6 +40,7 @@ COPY --from=deps /app/node_modules ./node_modules
 COPY src/server ./src/server
 COPY src/shared ./src/shared
 COPY --from=build /app/dist/webapp ./dist/webapp
+COPY --from=goose /goose /usr/local/bin/goose
 # npm/yarn/corepack в рантайме не нужны: убираем из PATH (меньше поверхность атаки).
 RUN rm -rf /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/corepack \
       /usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/corepack /opt/yarn* \

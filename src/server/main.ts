@@ -12,7 +12,7 @@ import { type RunningBot, startBot } from './bot/bot.ts';
 import { config } from './config.ts';
 import { closeDb, sql } from './db.ts';
 import { type AppEnv, onError, securityHeaders } from './http.ts';
-import { runMigrations } from './migrate.ts';
+import { assertSchemaUpToDate } from './migrate.ts';
 import { adminApi } from './routes/admin.ts';
 import { publicApi } from './routes/public.ts';
 import { findAvatar } from './repo.ts';
@@ -85,11 +85,11 @@ async function main(): Promise<void> {
   }
 
   try {
-    const applied = await runMigrations();
-    console.log(applied.length > 0 ? `[db] применены миграции: ${applied.join(', ')}` : '[db] схема актуальна');
+    const version = await assertSchemaUpToDate();
+    console.log(`[db] схема актуальна (goose, версия ${version})`);
   } catch (err) {
-    console.error('[db] не удалось подключиться к PostgreSQL или применить миграции:', err instanceof Error ? err.message : err);
-    console.error('[db] проверьте DATABASE_URL и что база запущена (docker compose up -d)');
+    console.error('[db] база недоступна или схема устарела:', err instanceof Error ? err.message : err);
+    console.error('[db] проверьте DATABASE_URL, что база запущена (docker compose up -d) и миграции применены (npm run migrate)');
     await closeDb().catch(() => {});
     process.exit(1);
   }

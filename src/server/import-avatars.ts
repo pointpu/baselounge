@@ -13,7 +13,7 @@ import { readFile, stat } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { config, PROJECT_ROOT } from './config.ts';
 import { closeDb, sql, tx } from './db.ts';
-import { runMigrations } from './migrate.ts';
+import { assertSchemaUpToDate } from './migrate.ts';
 import * as repo from './repo.ts';
 import { AVATAR_MAX_BYTES, AVATAR_MIME, avatarFileName, detectImageExt } from './services/players.ts';
 
@@ -23,7 +23,7 @@ const LEGACY_FILE_RE = /^[0-9a-f]{32}\.(?:jpg|png|webp)$/;
 async function main(): Promise<void> {
   const mediaDir = process.argv[2] ? resolve(PROJECT_ROOT, process.argv[2]) : config.mediaDir;
   const avatarsDir = join(mediaDir, 'avatars');
-  await runMigrations();
+  await assertSchemaUpToDate();
 
   const players = await sql<{ id: number; avatar_file: string }[]>`
     SELECT id, avatar_file FROM players WHERE avatar_file IS NOT NULL ORDER BY id`;

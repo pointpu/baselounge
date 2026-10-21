@@ -3,6 +3,7 @@
 -- Оно попадает в avatarUrl (/media/avatars/<имя>) и меняется при каждой замене фото — сброс кэша.
 -- Старые имена (32 hex-символа, файлы из MEDIA_DIR) переносит src/server/import-avatars.ts.
 
+-- +goose Up
 CREATE TABLE avatars (
   player_id  integer     PRIMARY KEY REFERENCES players (id) ON DELETE CASCADE,
   mime       text        NOT NULL CHECK (mime IN ('image/jpeg', 'image/png', 'image/webp')),
@@ -10,3 +11,6 @@ CREATE TABLE avatars (
   version    integer     NOT NULL DEFAULT 1 CHECK (version > 0),
   updated_at timestamptz NOT NULL DEFAULT now()
 );
+
+-- +goose Down
+DROP TABLE IF EXISTS avatars;

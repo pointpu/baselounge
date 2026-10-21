@@ -151,7 +151,7 @@ resources:
     memory: 384Mi
 
 probes:
-  # Даём время на миграции при старте: до 30 * 5с = 150с.
+  # Даём время на старт (подключение к БД, проверка схемы): до 30 * 5с = 150с.
   startup:
     periodSeconds: 5
     failureThreshold: 30
@@ -192,3 +192,14 @@ terminationGracePeriodSeconds: 30
 nodeSelector: {}
 tolerations: []
 affinity: {}
+
+# Миграции схемы (goose) в initContainer перед стартом приложения.
+# Приложение само миграции не применяет — только проверяет, что схема актуальна.
+migrations:
+  enabled: true
+  resources:
+    requests:
+      cpu: 20m
+      memory: 32Mi
+    limits:
+      memory: 128Mi

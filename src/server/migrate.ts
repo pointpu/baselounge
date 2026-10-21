@@ -1,52 +1,50 @@
 /**
- * Миграции схемы: SQL-файлы `src/server/migrations/NNN_name.sql`, применяются по порядку
- * при старте сервера (и перед сидом/импортом).
+ * Миграции схемы ведёт goose (pressly/goose): SQL-файлы `src/server/migrations/NNN_name.sql`
+ * с секциями `-- +goose Up` / `-- +goose Down`, применённые версии — в таблице `goose_db_version`.
  *
- * Всё выполняется в одной транзакции под `pg_advisory_xact_lock`: два процесса, стартующие
- * одновременно, не применят миграцию дважды — второй дождётся первого и увидит, что всё готово.
- * Применённые миграции записываются в `schema_migrations`; уже применённый файл менять нельзя —
- * изменения схемы оформляются новым файлом.
+ * Приложение миграции НЕ применяет: в Kubernetes это делает initContainer `migrate` до старта
+ * пода, локально — `npm run migrate`. Здесь только проверка, что схема не отстаёт от кода:
+ * сервер, сид и импорт отказываются работать со старой схемой и подсказывают, что запустить.
  */
-import { readdir, readFile } from 'node:fs/promises';
+import { readdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { sql } from './db.ts';
 
-const MIGRATIONS_DIR = join(import.meta.dirname, 'migrations');
-const FILE_RE = /^(\d{3})_[a-z0-9_]+\.sql$/;
-/** Произвольный, но постоянный ключ advisory-блокировки миграций. */
-const MIGRATION_LOCK_KEY = 4_172_026_001;
+export const MIGRATIONS_DIR = join(import.meta.dirname, 'migrations');
+const FILE_RE = /^(\d+)_[a-z0-9_]+\.sql$/;
 
-async function migrationFiles(): Promise<string[]> {
-  const files = (await readdir(MIGRATIONS_DIR)).filter((f) => FILE_RE.test(f)).sort();
-  const numbers = files.map((f) => FILE_RE.exec(f)![1]);
-  const dup = numbers.find((n, i) => numbers.indexOf(n) !== i);
-  if (dup) throw new Error(`Две миграции с номером ${dup} в ${MIGRATIONS_DIR}`);
-  return files;
+/** Номер последней миграции в коде (наибольший NNN среди файлов). */
+async function latestVersionInCode(): Promise<number> {
+  const versions = (await readdir(MIGRATIONS_DIR))
+    .map((f) => FILE_RE.exec(f)?.[1])
+    .filter((v): v is string => v !== undefined)
+    .map(Number);
+  const dup = versions.find((v, i) => versions.indexOf(v) !== i);
+  if (dup !== undefined) throw new Error(`Две миграции с номером ${dup} в ${MIGRATIONS_DIR}`);
+  return versions.length ? Math.max(...versions) : 0;
 }
 
-/** Применяет недостающие миграции; возвращает имена применённых сейчас. */
-export async function runMigrations(): Promise<string[]> {
-  const files = await migrationFiles();
-  return sql.begin(async (q) => {
-    await q`SELECT pg_advisory_xact_lock(${MIGRATION_LOCK_KEY})`;
-    await q`
-      CREATE TABLE IF NOT EXISTS schema_migrations (
-        name       text PRIMARY KEY,
-        applied_at timestamptz NOT NULL DEFAULT now()
-      )`;
-    const done = new Set((await q<{ name: string }[]>`SELECT name FROM schema_migrations`).map((r) => r.name));
-    const applied: string[] = [];
-    for (const file of files) {
-      if (done.has(file)) continue;
-      const body = await readFile(join(MIGRATIONS_DIR, file), 'utf8');
-      try {
-        await q.unsafe(body);
-      } catch (err) {
-        throw new Error(`Миграция ${file} не применилась: ${err instanceof Error ? err.message : String(err)}`, { cause: err });
-      }
-      await q`INSERT INTO schema_migrations (name) VALUES (${file})`;
-      applied.push(file);
-    }
-    return { applied };
-  }).then((r) => r.applied);
+/** Текущая версия схемы по goose (0 — goose ещё не запускался). */
+async function currentDbVersion(): Promise<number> {
+  const [exists] = await sql<{ ok: boolean }[]>`SELECT to_regclass('goose_db_version') IS NOT NULL AS ok`;
+  if (!exists?.ok) return 0;
+  // goose пишет и откаты (is_applied = false): берём последнюю запись по каждой версии.
+  const [row] = await sql<{ version: string | null }[]>`
+    SELECT max(version_id)::text AS version FROM (
+      SELECT DISTINCT ON (version_id) version_id, is_applied
+      FROM goose_db_version ORDER BY version_id, id DESC
+    ) v WHERE is_applied`;
+  return Number(row?.version ?? 0);
+}
+
+/** Бросает понятную ошибку, если в базе применены не все миграции из кода. */
+export async function assertSchemaUpToDate(): Promise<number> {
+  const [code, db] = await Promise.all([latestVersionInCode(), currentDbVersion()]);
+  if (db < code) {
+    throw new Error(
+      `Схема базы устарела: в базе версия ${db}, в коде ${code}. ` +
+        'Примените миграции: локально `npm run migrate`, в Kubernetes их применяет initContainer migrate.',
+    );
+  }
+  return db;
 }

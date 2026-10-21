@@ -1,6 +1,7 @@
 -- 001: исходная схема BASE LOUNGE (перенос со SQLite, включая table_size и dealer).
 -- Все моменты времени — timestamptz (UTC), структуры турнира — jsonb-массивы.
 
+-- +goose Up
 CREATE TABLE players (
   id             integer GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
   tg_id          bigint      NOT NULL UNIQUE CHECK (tg_id > 0),
@@ -68,3 +69,9 @@ CREATE TABLE results (
   UNIQUE (tournament_id, place)
 );
 CREATE INDEX results_player_idx ON results (player_id);
+
+-- +goose Down
+DROP TABLE IF EXISTS results;
+DROP TABLE IF EXISTS registrations;
+DROP TABLE IF EXISTS tournaments;
+DROP TABLE IF EXISTS players;

@@ -39,6 +39,27 @@ spec:
       terminationGracePeriodSeconds: {{ .Values.terminationGracePeriodSeconds }}
       securityContext:
         {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      {{- if .Values.migrations.enabled }}
+      # Миграции goose — до старта приложения (initContainer, не сайдкар): под не станет
+      # готовым, пока схема не обновлена; при ошибке миграции старая версия продолжает работать.
+      initContainers:
+        - name: migrate
+          image: {{ include "baselounge.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["goose", "-dir", "/app/src/server/migrations", "up"]
+          env:
+            - name: GOOSE_DRIVER
+              value: postgres
+            - name: GOOSE_DBSTRING
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "baselounge.secretName" . }}
+                  key: DATABASE_URL
+          resources:
+            {{- toYaml .Values.migrations.resources | nindent 12 }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+      {{- end }}
       containers:
         - name: app
           image: {{ include "baselounge.image" . }}

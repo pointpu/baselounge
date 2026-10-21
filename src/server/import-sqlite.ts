@@ -15,7 +15,7 @@ import { DatabaseSync } from 'node:sqlite';
 import type postgres from 'postgres';
 import { PROJECT_ROOT } from './config.ts';
 import { closeDb, sql, type TxSql } from './db.ts';
-import { runMigrations } from './migrate.ts';
+import { assertSchemaUpToDate } from './migrate.ts';
 
 const TABLES = ['players', 'tournaments', 'registrations', 'results'] as const;
 type Table = (typeof TABLES)[number];
@@ -254,7 +254,7 @@ async function main(): Promise<void> {
       `регистраций ${data.registrations.length}, результатов ${data.results.length}`,
   );
 
-  await runMigrations();
+  await assertSchemaUpToDate();
   const counts = await sql.begin(async (q) => {
     // Никто не должен писать в таблицы, пока идёт перенос.
     await q`LOCK TABLE players, tournaments, registrations, results IN ACCESS EXCLUSIVE MODE`;

@@ -5,7 +5,7 @@ Node-процессе на порту 8000) и всё, что нужно для 
 
 | Ресурс | Зачем |
 |---|---|
-| Deployment (1 реплика, `Recreate`) | приложение; миграции БД выполняются при старте |
+| Deployment (1 реплика, `Recreate`) | приложение; initContainer `migrate` (goose) применяет миграции БД до его старта |
 | Service `ClusterIP` 80 → 8000 | бэкенд для HTTPRoute |
 | Gateway (`envoy-gateway`) | listeners `http:80` и `https:443` для `gateway.hostname` |
 | HTTPRoute ×2 | приложение на https; редирект http → https |
@@ -27,7 +27,57 @@ Node-процессе на порту 8000) и всё, что нужно для 
   не используйте: NetworkPolicy разрешает egress на 5432 только в `database.privateCidr`.
 - **Проверки.** `/healthz` делает `SELECT 1`. readiness при падении БД выводит под из
   балансировки; liveness щадящая (~5 минут подряд ошибок), чтобы короткий сбой БД не
-  перезапускал бота. startup даёт до 150 с на миграции.
+  перезапускал бота. Миграции к этому моменту уже применены initContainer'ом (см. ниже).
+
+## Миграции БД (goose в initContainer)
+
+Схемой управляет [goose](https://github.com/pressly/goose) v3.29.0; бинарник встроен в тот же
+образ (скачивается при сборке с проверкой зафиксированной контрольной суммы). Файлы миграций —
+`src/server/migrations/NNN_name.sql`, применённые версии — в таблице `goose_db_version`.
+
+Порядок запуска пода:
+
+1. initContainer `migrate` (тот же образ, тот же Secret с `DATABASE_URL`) выполняет `goose up`.
+   Если миграция упала — под остаётся в `Init:Error`/`Init:CrashLoopBackOff`, приложение не
+   стартует, а старая версия к этому моменту уже остановлена (`Recreate`), — смотрите логи.
+2. Контейнер приложения стартует и только **проверяет**, что схема актуальна; сам миграции не
+   применяет и при несовпадении завершается с сообщением.
+
+Почему initContainer, а не sidecar: миграция — разовая задача, которая должна **завершиться до**
+старта приложения. initContainer гарантирует порядок и блокирует старт при ошибке; sidecar работает
+параллельно с приложением всё время жизни пода, порядок не гарантирует и висел бы без дела.
+
+Логи миграций:
+
+```sh
+kubectl -n baselounge logs deploy/baselounge -c migrate
+kubectl -n baselounge get pods            # STATUS Init:… — initContainer ещё работает или упал
+```
+
+Статус миграций и ручной откат (разовый под из того же образа; Secret подставляется через `envFrom`):
+
+```sh
+kubectl -n baselounge run goose-once --rm -it --restart=Never \
+  --image=ghcr.io/pointpu/baselounge:<tag> \
+  --overrides='{"spec":{"containers":[{"name":"goose-once","image":"ghcr.io/pointpu/baselounge:<tag>",
+    "stdin":true,"tty":true,"envFrom":[{"secretRef":{"name":"baselounge-secrets"}}],
+    "command":["sh","-c","goose -dir src/server/migrations postgres \"$DATABASE_URL\" status"]}]}}'
+```
+
+Для отката замените `status` на `down` (откатывает **одну** последнюю миграцию). Если под
+приложения работает, можно и `kubectl exec`:
+
+```sh
+kubectl -n baselounge exec -it deploy/baselounge -c app -- \
+  sh -c 'goose -dir src/server/migrations postgres "$DATABASE_URL" status'
+```
+
+> **Осторожно с `down`.** Откат часто удаляет таблицы/столбцы вместе с данными — сначала сделайте
+> `pg_dump`. Остановите приложение (`kubectl -n baselounge scale deploy/baselounge --replicas=0`),
+> иначе при следующем старте initContainer снова применит откатанную миграцию: после отката
+> разверните образ, в котором этой миграции нет (`--set image.tag=sha-<предыдущий>`), — `helm upgrade`
+> вернёт реплику. NetworkPolicy чарта действует только на поды с его метками, поэтому разовый под
+> ею не ограничен; если в namespace есть политика default-deny, используйте `kubectl exec`.
 
 ## Предварительные требования
 
@@ -196,12 +246,13 @@ Listener общего Gateway должен разрешать маршруты �
 
 ## 7. Перенос данных
 
-Схема создаётся миграциями при старте пода. Данные из локальной БД переносятся
+Схема создаётся initContainer'ом `migrate` при старте пода. Данные из локальной БД переносятся
 стандартно: `pg_dump` с локального PostgreSQL → `pg_restore`/`psql` в managed-БД
 (до первого старта пода или при остановленном Deployment:
 `kubectl -n baselounge scale deploy/baselounge --replicas=0`, затем `helm upgrade`
-вернёт 1). Для старой SQLite-базы есть `npm run import:sqlite` (см. корневой README) —
-запускать локально с `DATABASE_URL`, указывающим на managed-БД.
+вернёт 1). Дамп содержит и `goose_db_version`, так что goose увидит уже применённые миграции.
+Для старой SQLite-базы есть `npm run import:sqlite` (см. корневой README) — запускать
+локально с `DATABASE_URL`, указывающим на managed-БД, после `npm run migrate` по тому же адресу.
 
 Аватары, загруженные вручную в старой версии (файлы в `data/media/avatars`), перед
 переносом нужно один раз загрузить в БД: `node --env-file-if-exists=.env
