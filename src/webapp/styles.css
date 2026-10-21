@@ -1,0 +1,2475 @@
+/*
+ * BASE LOUNGE · poker club — стили Mini App.
+ *
+ * Принципы: фирменная тёмная тема «чёрный + золото» (как логотип), золотые рамки и мягкое
+ * свечение у ключевых карточек, системный шрифт, сетка 8 pt, тач-цели ≥ 44 px,
+ * видимый фокус, prefers-reduced-motion. Тема фиксированная — не зависит от темы Telegram.
+ */
+
+/* ───────────────────────── Токены ───────────────────────── */
+
+:root {
+  /* Золото бренда: светлое → основное → глубокое. */
+  --gold-light: #f2d48a;
+  --gold: #d9ae5b;
+  --gold-deep: #9c7430;
+  --gold-ink: #f2c46d;
+  --gold-gradient: linear-gradient(135deg, var(--gold-light), var(--gold) 45%, var(--gold-deep));
+
+  /* Акцент интерфейса (исторически «felt») — теперь золото. */
+  --felt: var(--gold);
+  --felt-strong: #c49a47;
+  --felt-deep: var(--gold-deep);
+  /* Текст поверх золотой заливки. */
+  --on-accent: #141008;
+
+  --danger: #e5484d;
+  --warn: #d99a2b;
+
+  --bg: #0b0b0c;
+  --surface: #151517;
+  --surface-2: #1c1b1e;
+  --text: #f5f2ea;
+  --hint: #9a958a;
+  --link: var(--gold-light);
+  --destructive: #ff6b6b;
+
+  --line: rgb(255 255 255 / 0.08);
+  --line-strong: rgb(255 255 255 / 0.14);
+  --line-gold: rgb(217 174 91 / 0.45);
+  --fill: rgb(255 255 255 / 0.05);
+  --fill-strong: rgb(255 255 255 / 0.09);
+  --felt-soft: rgb(217 174 91 / 0.14);
+  --gold-soft: rgb(217 174 91 / 0.2);
+  --danger-soft: rgb(229 72 77 / 0.16);
+
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+
+  --radius-sm: 8px;
+  --radius: 14px;
+  --radius-lg: 22px;
+  --radius-pill: 999px;
+
+  --touch: 44px;
+  --tabbar-h: 56px;
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --shadow: none;
+  --shadow-pop: 0 10px 36px rgb(0 0 0 / 0.55);
+  --glow-gold: 0 0 0 1px rgb(217 174 91 / 0.12), 0 12px 40px rgb(217 174 91 / 0.14);
+  --ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+
+  --font: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+
+  color-scheme: dark;
+}
+
+/* ───────────────────────── База ───────────────────────── */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+  -webkit-tap-highlight-color: transparent;
+  background: var(--bg);
+}
+
+body {
+  margin: 0;
+  min-height: 100dvh;
+  background: var(--bg);
+  color: var(--text);
+  font: 400 15px/1.45 var(--font);
+  overscroll-behavior-y: none;
+  -webkit-font-smoothing: antialiased;
+}
+
+h1,
+h2,
+h3,
+p,
+dl,
+dd,
+ol,
+ul,
+figure {
+  margin: 0;
+}
+
+ol,
+ul {
+  padding: 0;
+  list-style: none;
+}
+
+a {
+  color: var(--link);
+  text-decoration: none;
+}
+
+img,
+svg {
+  display: block;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+  color: inherit;
+}
+
+button {
+  cursor: pointer;
+}
+
+button:disabled {
+  cursor: default;
+}
+
+:focus-visible {
+  outline: 2px solid var(--felt);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
+
+[hidden] {
+  display: none !important;
+}
+
+.sr-only {
+  position: absolute !important;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+.muted {
+  color: var(--hint);
+}
+
+.center {
+  text-align: center;
+}
+
+.icon {
+  flex: none;
+}
+
+/* ───────────────────────── Каркас ───────────────────────── */
+
+.app {
+  min-height: 100dvh;
+}
+
+.screen {
+  max-width: 640px;
+  margin: 0 auto;
+  padding: var(--space-4) var(--space-4) calc(var(--tabbar-h) + var(--safe-bottom) + var(--space-6));
+}
+
+body.has-main-action .screen {
+  padding-bottom: calc(var(--tabbar-h) + var(--safe-bottom) + 88px);
+}
+
+.view {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+  outline: none;
+  animation: view-in 0.24s var(--ease);
+}
+
+.view--center {
+  min-height: 70dvh;
+  justify-content: center;
+}
+
+@keyframes view-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+}
+
+.stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.stack--lg {
+  gap: var(--space-5);
+}
+
+.back-link {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-height: var(--touch);
+  margin: calc(-1 * var(--space-2)) 0 var(--space-2) calc(-1 * var(--space-2));
+  padding: 0 var(--space-3) 0 var(--space-1);
+  border: 0;
+  background: none;
+  color: var(--link);
+  font-weight: 500;
+}
+
+/* ───────────────────────── Типографика ───────────────────────── */
+
+.page-title {
+  font-size: 26px;
+  line-height: 1.15;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  overflow-wrap: anywhere;
+}
+
+.page-sub {
+  margin-top: calc(-1 * var(--space-4));
+  color: var(--hint);
+}
+
+.eyebrow {
+  color: var(--hint);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.section-title {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin-bottom: var(--space-2);
+  padding: 0 var(--space-1);
+}
+
+.section-title h2 {
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--hint);
+}
+
+.section-title__link {
+  display: inline-flex;
+  align-items: center;
+  min-height: 32px;
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.prose {
+  white-space: pre-line;
+  overflow-wrap: anywhere;
+}
+
+/* ───────────────────────── Карточки и списки ───────────────────────── */
+
+.card {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+}
+
+.card--pad {
+  padding: var(--space-4);
+}
+
+.list {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.list:not(.card) {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+
+.list__header {
+  padding: var(--space-3) var(--space-4) var(--space-1);
+  color: var(--hint);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.list__row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-height: 56px;
+  padding: var(--space-2) var(--space-4);
+  color: inherit;
+  transition: background-color 0.15s;
+}
+
+.list__row + .list__row {
+  border-top: 1px solid var(--line);
+}
+
+a.list__row:active {
+  background: var(--fill);
+}
+
+@media (hover: hover) {
+  a.list__row:hover {
+    background: var(--fill);
+  }
+}
+
+.list__row.is-me {
+  background: var(--felt-soft);
+}
+
+.list__main {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+}
+
+.list__title {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: inherit;
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.list__sub {
+  color: var(--hint);
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.list__sub a {
+  color: var(--link);
+}
+
+.list__icons {
+  font-size: 13px;
+  letter-spacing: 1px;
+}
+
+.list__value {
+  flex: none;
+  font-weight: 600;
+}
+
+.list__aside {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: var(--space-1);
+}
+
+.verified {
+  color: var(--felt);
+  font-weight: 700;
+}
+
+.place-pill {
+  display: inline-grid;
+  flex: none;
+  place-items: center;
+  min-width: 28px;
+  height: 28px;
+  padding: 0 6px;
+  border-radius: var(--radius-pill);
+  background: var(--fill);
+  font-size: 13px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.place-pill--1 {
+  background: var(--gold);
+  color: #3d2800;
+}
+
+.place-pill--2 {
+  background: #c9ced6;
+  color: #2b3038;
+}
+
+.place-pill--3 {
+  background: #d69a6a;
+  color: #3a1f08;
+}
+
+/* ───────────────────────── Кнопки ───────────────────────── */
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  min-height: var(--touch);
+  padding: 0 var(--space-4);
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  background: var(--fill);
+  color: var(--text);
+  font-size: 15px;
+  font-weight: 600;
+  text-align: center;
+  user-select: none;
+  transition:
+    transform 0.12s var(--ease),
+    background-color 0.15s,
+    opacity 0.15s;
+}
+
+.btn:active:not(:disabled) {
+  transform: scale(0.97);
+}
+
+.btn:disabled {
+  opacity: 0.55;
+}
+
+.btn--primary {
+  background: var(--gold-gradient);
+  color: var(--on-accent);
+  box-shadow: 0 6px 20px rgb(217 174 91 / 0.22);
+}
+
+.btn--primary:active:not(:disabled) {
+  background: var(--felt-strong);
+}
+
+.btn--soft {
+  background: var(--felt-soft);
+  color: var(--link);
+}
+
+.btn--ghost {
+  background: transparent;
+  border-color: var(--line-strong);
+  color: var(--text);
+}
+
+.btn--danger {
+  background: var(--danger-soft);
+  color: var(--destructive);
+}
+
+.btn--block {
+  width: 100%;
+}
+
+.btn--sm {
+  min-height: 36px;
+  padding: 0 var(--space-3);
+  border-radius: var(--radius-sm);
+  font-size: 14px;
+}
+
+.btn.is-busy {
+  position: relative;
+  color: transparent;
+}
+
+.btn.is-busy > * {
+  visibility: hidden;
+}
+
+.btn.is-busy::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  width: 18px;
+  height: 18px;
+  margin: auto;
+  border: 2px solid currentColor;
+  border-color: var(--text) transparent var(--text) transparent;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+.btn--primary.is-busy::after {
+  border-color: #fff transparent #fff transparent;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.btn-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.btn-row > .btn {
+  flex: 1 1 140px;
+}
+
+/* Админка: кнопки «Пауза / Сбросить» и подсказки не должны прилипать к часам. */
+.admin-clock > .clock ~ *,
+.admin-clock > .muted ~ .btn-row {
+  margin-top: var(--space-4);
+}
+
+.icon-btn {
+  display: inline-grid;
+  flex: none;
+  place-items: center;
+  width: var(--touch);
+  height: var(--touch);
+  border: 0;
+  border-radius: 50%;
+  background: var(--fill);
+  color: var(--hint);
+}
+
+.icon-btn--sm {
+  width: 36px;
+  height: 36px;
+  background: transparent;
+}
+
+.icon-btn:active {
+  background: var(--fill-strong);
+}
+
+/* Главное действие вне Telegram — закреплённая кнопка над таб-баром. */
+.main-action {
+  position: fixed;
+  z-index: 30;
+  left: 50%;
+  bottom: calc(var(--tabbar-h) + var(--safe-bottom) + var(--space-3));
+  width: min(608px, calc(100% - 2 * var(--space-4)));
+  min-height: 50px;
+  transform: translateX(-50%);
+  border: 0;
+  border-radius: var(--radius);
+  background: var(--gold-gradient);
+  color: var(--on-accent);
+  font-size: 16px;
+  font-weight: 700;
+  box-shadow: var(--shadow-pop);
+}
+
+.main-action--danger {
+  background: var(--danger);
+}
+
+.main-action:disabled,
+.main-action.is-busy {
+  opacity: 0.7;
+}
+
+/* ───────────────────────── Чипы и бейджи ───────────────────────── */
+
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 28px;
+  padding: 0 10px;
+  border-radius: var(--radius-pill);
+  background: var(--fill);
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.chip .icon {
+  color: var(--hint);
+}
+
+.chip--gold {
+  background: var(--gold-soft);
+  color: var(--gold-ink);
+}
+
+.chip--gold .icon {
+  color: inherit;
+}
+
+.chip--felt {
+  background: var(--felt-soft);
+  color: var(--link);
+}
+
+.chip--felt .icon {
+  color: inherit;
+}
+
+.chip--live {
+  background: var(--danger-soft);
+  color: var(--destructive);
+}
+
+.chips--on-felt .chip {
+  background: rgb(255 255 255 / 0.16);
+  color: #fff;
+}
+
+.chips--on-felt .chip .icon {
+  color: rgb(255 255 255 / 0.8);
+}
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 22px;
+  padding: 0 8px;
+  border-radius: var(--radius-pill);
+  background: var(--fill);
+  color: var(--hint);
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.badge--draft {
+  background: var(--fill-strong);
+  color: var(--hint);
+}
+
+.badge--registration {
+  background: var(--felt-soft);
+  color: var(--link);
+}
+
+.badge--running {
+  background: var(--danger);
+  color: #fff;
+  letter-spacing: 0.06em;
+}
+
+.badge--completed {
+  background: var(--fill);
+  color: var(--hint);
+}
+
+.badge--cancelled {
+  background: var(--danger-soft);
+  color: var(--destructive);
+}
+
+.badge--mine {
+  background: var(--felt-soft);
+  color: var(--link);
+}
+
+.badge--wait {
+  background: var(--gold-soft);
+  color: var(--gold-ink);
+}
+
+.badge--paused {
+  background: var(--gold);
+  color: #3d2800;
+}
+
+.live-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  animation: pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  50% {
+    opacity: 0.25;
+  }
+}
+
+/* ───────────────────────── Баннеры ───────────────────────── */
+
+.banner {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius);
+  background: var(--fill);
+  color: var(--text);
+}
+
+.banner .icon {
+  color: var(--felt);
+}
+
+.banner__eyebrow {
+  color: var(--hint);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.banner__title {
+  font-weight: 600;
+}
+
+.banner__text {
+  margin-top: 2px;
+  color: var(--hint);
+  font-size: 14px;
+}
+
+.banner--ok {
+  background: var(--felt-soft);
+}
+
+.banner--seat {
+  border: 1px solid var(--line-gold);
+  background:
+    radial-gradient(120% 120% at 100% 0%, rgb(217 174 91 / 0.22), transparent 60%),
+    var(--surface-2);
+  color: var(--text);
+  box-shadow: var(--glow-gold);
+}
+
+.banner--seat .icon {
+  color: var(--gold);
+}
+
+.banner--seat .banner__eyebrow {
+  color: rgb(255 255 255 / 0.75);
+}
+
+.banner--seat .banner__title {
+  font-size: 20px;
+}
+
+.banner--wait {
+  background: var(--gold-soft);
+}
+
+.banner--wait .icon {
+  color: var(--gold-ink);
+}
+
+.banner--danger {
+  background: var(--danger-soft);
+  color: var(--destructive);
+  font-weight: 500;
+}
+
+.banner--muted {
+  color: var(--hint);
+}
+
+/* ───────────────────────── Таб-бар ───────────────────────── */
+
+.tabbar {
+  position: fixed;
+  z-index: 40;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  justify-content: center;
+  padding: 0 max(var(--space-2), env(safe-area-inset-right, 0px)) var(--safe-bottom)
+    max(var(--space-2), env(safe-area-inset-left, 0px));
+  border-top: 1px solid var(--line);
+  background: color-mix(in srgb, var(--surface) 88%, transparent);
+  -webkit-backdrop-filter: saturate(180%) blur(16px);
+  backdrop-filter: saturate(180%) blur(16px);
+}
+
+.tabbar__item {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  max-width: 120px;
+  min-height: var(--tabbar-h);
+  color: var(--hint);
+  font-size: 11px;
+  font-weight: 500;
+  transition: color 0.15s;
+}
+
+.tabbar__item[aria-current='page'] {
+  color: var(--felt);
+}
+
+.tabbar__item[aria-current='page'] .icon {
+  stroke-width: 2.4;
+}
+
+.tabbar__item:active .icon {
+  transform: scale(0.9);
+}
+
+.tabbar__label {
+  line-height: 1;
+}
+
+/* ───────────────────────── Состояния загрузки, пустые, toast ───────────────────────── */
+
+.skeleton {
+  border-radius: var(--radius);
+  background: linear-gradient(90deg, var(--fill) 25%, var(--fill-strong) 50%, var(--fill) 75%) 0 0 / 300% 100%;
+  animation: shimmer 1.4s ease-in-out infinite;
+}
+
+@keyframes shimmer {
+  from {
+    background-position: 100% 0;
+  }
+  to {
+    background-position: 0 0;
+  }
+}
+
+.empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-6) var(--space-4);
+  text-align: center;
+}
+
+.empty__emoji {
+  margin-bottom: var(--space-2);
+  font-size: 48px;
+  line-height: 1;
+}
+
+.empty__title {
+  font-size: 17px;
+  font-weight: 600;
+}
+
+.empty__text {
+  max-width: 320px;
+  color: var(--hint);
+}
+
+.empty .btn {
+  margin-top: var(--space-3);
+}
+
+.toasts {
+  position: fixed;
+  z-index: 60;
+  top: calc(env(safe-area-inset-top, 0px) + var(--space-3));
+  left: 50%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-2);
+  width: min(480px, calc(100% - 2 * var(--space-4)));
+  transform: translateX(-50%);
+  pointer-events: none;
+}
+
+.toast {
+  max-width: 100%;
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius);
+  border: 1px solid var(--line-strong);
+  background: var(--surface-2);
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 500;
+  box-shadow: var(--shadow-pop);
+  animation: toast-in 0.25s var(--ease);
+  transition:
+    opacity 0.25s,
+    transform 0.25s;
+}
+
+.toast--success {
+  border-color: var(--line-gold);
+  background: var(--surface-2);
+  color: var(--gold-light);
+}
+
+.toast--error {
+  background: var(--danger);
+  color: #fff;
+}
+
+.toast.is-leaving {
+  opacity: 0;
+  transform: translateY(-8px);
+}
+
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(-12px) scale(0.98);
+  }
+}
+
+/* ───────────────────────── Bottom sheet ───────────────────────── */
+
+.sheet {
+  width: 100%;
+  max-width: 640px;
+  max-height: 90dvh;
+  margin: auto auto 0;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+  background: var(--surface);
+  color: var(--text);
+  box-shadow: var(--shadow-pop);
+}
+
+.sheet[open] {
+  animation: sheet-in 0.28s var(--ease);
+}
+
+.sheet::backdrop {
+  background: rgb(0 0 0 / 0.45);
+  animation: fade-in 0.2s;
+}
+
+@keyframes sheet-in {
+  from {
+    transform: translateY(100%);
+  }
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+}
+
+.sheet__panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  padding: var(--space-3) var(--space-4) calc(var(--space-4) + var(--safe-bottom));
+}
+
+.sheet__panel::before {
+  content: '';
+  align-self: center;
+  width: 36px;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--line-strong);
+}
+
+.sheet__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.sheet__head h2 {
+  font-size: 18px;
+  font-weight: 700;
+}
+
+.sheet__body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+/* ───────────────────────── Формы ───────────────────────── */
+
+.input {
+  width: 100%;
+  min-height: var(--touch);
+  padding: 10px var(--space-3);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text);
+  font-size: 16px; /* ≥ 16px — iOS не зумит поле при фокусе */
+  transition:
+    border-color 0.15s,
+    box-shadow 0.15s;
+  appearance: none;
+}
+
+.input::placeholder {
+  color: var(--hint);
+  opacity: 0.8;
+}
+
+.input:focus {
+  outline: none;
+  border-color: var(--felt);
+  box-shadow: 0 0 0 3px var(--felt-soft);
+}
+
+.input[aria-invalid='true'],
+.input:user-invalid {
+  border-color: var(--danger);
+  box-shadow: 0 0 0 3px var(--danger-soft);
+}
+
+.textarea {
+  min-height: 96px;
+  resize: vertical;
+  line-height: 1.4;
+}
+
+.select {
+  padding-right: 36px;
+  background-image:
+    linear-gradient(45deg, transparent 50%, var(--hint) 50%), linear-gradient(135deg, var(--hint) 50%, transparent 50%);
+  background-position:
+    calc(100% - 18px) 50%,
+    calc(100% - 13px) 50%;
+  background-size: 5px 5px;
+  background-repeat: no-repeat;
+}
+
+input[type='number']::-webkit-inner-spin-button,
+input[type='number']::-webkit-outer-spin-button {
+  margin: 0;
+  -webkit-appearance: none;
+}
+
+input[type='number'] {
+  -moz-appearance: textfield;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.field__label {
+  color: var(--hint);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.field__hint {
+  color: var(--hint);
+  font-size: 13px;
+}
+
+.field__error {
+  color: var(--destructive);
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-3);
+}
+
+@media (max-width: 360px) {
+  .form-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.check {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: center;
+  column-gap: var(--space-3);
+  min-height: var(--touch);
+  cursor: pointer;
+}
+
+.check__input {
+  width: 22px;
+  height: 22px;
+  margin: 0;
+  accent-color: var(--felt);
+}
+
+.check__hint {
+  grid-column: 2;
+  color: var(--hint);
+  font-size: 13px;
+}
+
+.search {
+  position: relative;
+  display: block;
+}
+
+.search .icon {
+  position: absolute;
+  top: 50%;
+  left: var(--space-3);
+  color: var(--hint);
+  transform: translateY(-50%);
+  pointer-events: none;
+}
+
+.search .input {
+  padding-left: 40px;
+  border-radius: var(--radius);
+}
+
+/* ───────────────────────── Сегмент-контрол ───────────────────────── */
+
+.segmented {
+  display: flex;
+  gap: 2px;
+  padding: 3px;
+  border-radius: calc(var(--radius-sm) + 3px);
+  background: var(--fill-strong);
+}
+
+.segmented__item {
+  flex: 1;
+  min-height: 38px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--hint);
+  font-size: 14px;
+  font-weight: 600;
+  transition:
+    background-color 0.15s,
+    color 0.15s;
+}
+
+.segmented__item[aria-pressed='true'] {
+  background: var(--surface);
+  color: var(--text);
+  box-shadow: 0 1px 3px rgb(0 0 0 / 0.12);
+}
+
+/* ───────────────────────── Аватары ───────────────────────── */
+
+.avatar {
+  display: inline-grid;
+  flex: none;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  background: hsl(var(--hue, 40) 28% 30%);
+  color: var(--text);
+  font-size: 15px;
+  font-weight: 700;
+  object-fit: cover;
+  user-select: none;
+}
+
+.avatar--sm {
+  width: 32px;
+  height: 32px;
+  font-size: 12px;
+}
+
+.avatar--lg {
+  width: 56px;
+  height: 56px;
+  font-size: 19px;
+}
+
+.avatar--xl {
+  width: 88px;
+  height: 88px;
+  font-size: 30px;
+}
+
+.avatar-edit {
+  position: relative;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: none;
+}
+
+.avatar-edit__badge {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border: 3px solid var(--bg);
+  border-radius: 50%;
+  background: var(--gold-gradient);
+  color: var(--on-accent);
+}
+
+.avatar-edit.is-busy .avatar {
+  opacity: 0.5;
+  animation: pulse 1.2s ease-in-out infinite;
+}
+
+/* ───────────────────────── Афиша ───────────────────────── */
+
+.home-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.home-head__logo {
+  flex: none;
+  width: 44px;
+  height: 44px;
+  object-fit: contain;
+}
+
+.home-head__title {
+  font-size: 22px;
+  line-height: 1.2;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+.hero {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-5) var(--space-4) var(--space-4);
+  overflow: hidden;
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--line-gold);
+  background:
+    radial-gradient(110% 80% at 100% 0%, rgb(217 174 91 / 0.26), transparent 55%),
+    radial-gradient(80% 70% at 0% 100%, rgb(217 174 91 / 0.08), transparent 60%),
+    linear-gradient(160deg, #1a1712, #0e0e0f);
+  color: var(--text);
+  box-shadow: var(--glow-gold);
+  transition: transform 0.15s var(--ease);
+}
+
+.hero:active {
+  transform: scale(0.99);
+}
+
+/* Декоративное «кольцо фишки» в углу. */
+.hero::after {
+  content: '';
+  position: absolute;
+  top: -48px;
+  right: -48px;
+  width: 160px;
+  height: 160px;
+  border: 10px dashed rgb(232 176 75 / 0.35);
+  border-radius: 50%;
+  pointer-events: none;
+}
+
+.hero__eyebrow {
+  color: var(--gold);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.hero__title {
+  font-size: 26px;
+  line-height: 1.15;
+  font-weight: 800;
+  letter-spacing: -0.01em;
+  overflow-wrap: anywhere;
+}
+
+.hero__sub {
+  color: rgb(255 255 255 / 0.8);
+}
+
+.hero__until {
+  margin-top: var(--space-2);
+  color: rgb(255 255 255 / 0.9);
+  font-weight: 500;
+}
+
+.hero__cta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: var(--space-2);
+  padding-top: var(--space-3);
+  border-top: 1px solid rgb(255 255 255 / 0.16);
+  font-weight: 600;
+}
+
+.hero__cta .badge--mine,
+.hero__cta .badge--wait {
+  background: rgb(255 255 255 / 0.18);
+  color: #fff;
+}
+
+.hero__cta-text {
+  color: var(--gold);
+}
+
+.hero--live {
+  gap: var(--space-3);
+  padding: var(--space-4);
+}
+
+.hero__live-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.hero--live .clock {
+  border-color: rgb(217 174 91 / 0.28);
+  background: rgb(0 0 0 / 0.35);
+  color: var(--text);
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.04);
+}
+
+.hero--live .clock__ring-track {
+  stroke: rgb(255 255 255 / 0.1);
+}
+
+.hero--live .clock__caption,
+.hero--live .clock__timer-caption,
+.hero--live .clock__level,
+.hero--live .clock__next,
+.hero--live .clock__ante {
+  color: rgb(255 255 255 / 0.72);
+}
+
+.hero--live .clock__bar {
+  background: rgb(255 255 255 / 0.1);
+}
+
+.countdown {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: var(--space-2);
+  margin: var(--space-1) 0 var(--space-2);
+}
+
+.countdown__cell {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: var(--space-2) 0;
+  border-radius: var(--radius-sm);
+  background: rgb(0 0 0 / 0.2);
+}
+
+.countdown__value {
+  font-size: 26px;
+  line-height: 1.1;
+  font-weight: 700;
+}
+
+.countdown__label {
+  color: rgb(255 255 255 / 0.65);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+/* ───────────────────────── Карточка турнира ───────────────────────── */
+
+.tcard {
+  display: grid;
+  grid-template-columns: 52px minmax(0, 1fr) 20px;
+  grid-template-areas:
+    'date body chevron'
+    'chips chips chips';
+  align-items: center;
+  gap: var(--space-3);
+  min-height: 88px;
+  padding: var(--space-3);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: var(--shadow);
+  color: inherit;
+  transition:
+    transform 0.12s var(--ease),
+    background-color 0.15s;
+}
+
+.tcard:active {
+  transform: scale(0.985);
+  background: color-mix(in srgb, var(--surface) 92%, var(--text));
+}
+
+.tcard__date {
+  grid-area: date;
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  width: 52px;
+  height: 56px;
+  border-radius: var(--radius-sm);
+  background: var(--felt-soft);
+  color: var(--link);
+}
+
+.tcard__day {
+  font-size: 22px;
+  line-height: 1;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.tcard__month {
+  margin-top: 2px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.tcard--running .tcard__date {
+  background: var(--danger-soft);
+  color: var(--destructive);
+}
+
+.tcard--draft .tcard__date,
+.tcard--completed .tcard__date,
+.tcard--cancelled .tcard__date {
+  background: var(--fill);
+  color: var(--hint);
+}
+
+.tcard--cancelled .tcard__title {
+  text-decoration: line-through;
+  text-decoration-color: var(--hint);
+}
+
+.tcard--draft {
+  border-style: dashed;
+}
+
+.tcard__body {
+  grid-area: body;
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.tcard__title {
+  font-size: 16px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tcard__sub {
+  color: var(--hint);
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tcard .chips {
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.tcard .chip {
+  min-height: 24px;
+  padding: 0 8px;
+  font-size: 12px;
+}
+
+.tcard__chevron {
+  flex: none;
+  color: var(--hint);
+  opacity: 0.6;
+}
+
+/* ───────────────────────── Экран турнира ───────────────────────── */
+
+.detail-head {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.detail-head__badges {
+  display: flex;
+  gap: var(--space-2);
+}
+
+.detail-head__sub {
+  color: var(--hint);
+}
+
+.detail-head .chips {
+  margin-top: var(--space-1);
+}
+
+.info {
+  display: flex;
+  flex-direction: column;
+}
+
+.info__row {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-4);
+  padding: var(--space-3) var(--space-4);
+}
+
+.info__row + .info__row {
+  border-top: 1px solid var(--line);
+}
+
+.info__row dt {
+  flex: none;
+  color: var(--hint);
+  white-space: nowrap;
+}
+
+.info__row dd {
+  min-width: 0;
+  font-weight: 500;
+  text-align: right;
+}
+
+/* Теги карточки турнира: одна линия во всю ширину; если не влезут — листаются вбок. */
+.tcard__chevron {
+  grid-area: chevron;
+}
+
+.tcard__chips {
+  grid-area: chips;
+  flex-wrap: nowrap;
+  gap: 4px;
+  margin-top: calc(-1 * var(--space-1));
+  overflow-x: auto;
+  scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
+}
+
+.tcard__chips::-webkit-scrollbar {
+  display: none;
+}
+
+.tcard__chips > * {
+  flex: none;
+}
+
+/* Компактные теги в карточке и в «Ближайшем турнире», чтобы обычный набор влезал в одну линию. */
+.tcard__chips .chip,
+.chips--on-felt .chip {
+  gap: 4px;
+  min-height: 26px;
+  padding: 0 7px;
+  font-size: 12.5px;
+}
+
+.tcard__chips .chip .icon,
+.chips--on-felt .chip .icon {
+  width: 14px;
+  height: 14px;
+}
+
+.tcard__chips .chip,
+.tcard__chips .badge {
+  padding: 0 6px;
+}
+
+/* «Ближайший турнир»: теги тоже в одну линию, при нехватке места — листаются вбок. */
+.chips--on-felt {
+  flex-wrap: nowrap;
+  gap: 4px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.chips--on-felt::-webkit-scrollbar {
+  display: none;
+}
+
+.chips--on-felt > * {
+  flex: none;
+}
+
+/* Ре-энтри / add-on: цена — одной строкой, условие — подписью под ней. */
+.info__row--bullet {
+  align-items: flex-start;
+}
+
+.info__row--bullet dd {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+}
+
+.info__main {
+  white-space: nowrap;
+}
+
+.info__note {
+  color: var(--hint);
+  font-size: 13px;
+  font-weight: 400;
+  line-height: 1.35;
+}
+
+.blinds summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 52px;
+  padding: 0 var(--space-4);
+  font-weight: 600;
+  list-style: none;
+  cursor: pointer;
+}
+
+.blinds summary::-webkit-details-marker {
+  display: none;
+}
+
+.blinds summary .icon {
+  color: var(--hint);
+  transform: rotate(90deg);
+  transition: transform 0.2s var(--ease);
+}
+
+.blinds[open] summary .icon {
+  transform: rotate(-90deg);
+}
+
+.table-wrap {
+  overflow-x: auto;
+  border-top: 1px solid var(--line);
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+}
+
+.table th,
+.table td {
+  padding: 10px var(--space-4);
+  text-align: left;
+}
+
+.table th {
+  color: var(--hint);
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.table th:last-child,
+.table td:last-child {
+  text-align: right;
+}
+
+.table tbody tr + tr {
+  border-top: 1px solid var(--line);
+}
+
+.table tr.is-break td {
+  color: var(--gold-ink);
+  background: var(--gold-soft);
+  font-weight: 500;
+  text-align: center;
+}
+
+.table tr.is-current td {
+  background: var(--felt-soft);
+  color: var(--link);
+  font-weight: 700;
+}
+
+.people {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(76px, 1fr));
+  gap: var(--space-3) var(--space-2);
+}
+
+.person {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  padding: var(--space-2) 2px;
+  border-radius: var(--radius);
+  color: inherit;
+}
+
+.person:active {
+  background: var(--fill);
+}
+
+.person.is-me .avatar {
+  box-shadow:
+    0 0 0 2px var(--bg),
+    0 0 0 4px var(--felt);
+}
+
+.person__name {
+  max-width: 100%;
+  font-size: 12px;
+  text-align: center;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.waitlist {
+  margin-top: var(--space-3);
+}
+
+/* ───────────────────────── Живые часы ───────────────────────── */
+
+.clock {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  box-shadow: var(--shadow);
+}
+
+.clock__head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.clock__level {
+  color: var(--hint);
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.clock__head .badge--paused {
+  margin-left: auto;
+}
+
+.clock__main {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+}
+
+.clock__dial {
+  position: relative;
+  flex: none;
+  width: 132px;
+  height: 132px;
+}
+
+.clock__ring {
+  width: 100%;
+  height: 100%;
+}
+
+.clock__ring-track {
+  stroke: var(--fill-strong);
+}
+
+.clock__ring-value {
+  stroke: var(--gold);
+  filter: drop-shadow(0 0 6px rgb(217 174 91 / 0.35));
+  transition: stroke-dashoffset 1s linear;
+}
+
+.clock.is-break .clock__ring-value {
+  stroke: var(--gold-light);
+}
+
+.clock.is-paused .clock__ring-value {
+  stroke: var(--hint);
+}
+
+.clock__dial-text {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+}
+
+.clock__timer {
+  font-size: 28px;
+  line-height: 1;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+.clock.is-paused .clock__timer {
+  animation: pulse 1.6s ease-in-out infinite;
+}
+
+.clock__timer-caption {
+  margin-top: 4px;
+  color: var(--hint);
+  font-size: 11px;
+}
+
+.clock__info {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.clock__caption {
+  color: var(--hint);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.clock__blinds {
+  /* Размер подгоняет fitOneLine() в widgets.ts; здесь — стартовое значение. */
+  font-size: 40px;
+  line-height: 1.1;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.clock.is-break .clock__blinds {
+  color: var(--gold-ink);
+}
+
+.hero--live .clock.is-break .clock__blinds {
+  color: var(--gold);
+}
+
+.clock__ante {
+  color: var(--hint);
+  font-weight: 500;
+}
+
+.clock__bar {
+  height: 4px;
+  overflow: hidden;
+  border-radius: 2px;
+  background: var(--fill-strong);
+}
+
+.clock__bar-value {
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--gold-deep), var(--gold-light));
+  box-shadow: 0 0 8px rgb(217 174 91 / 0.4);
+  transition: width 1s linear;
+}
+
+.clock__next {
+  color: var(--hint);
+  font-size: 14px;
+  font-weight: 500;
+}
+
+/* ───────────────────────── Пьедестал ───────────────────────── */
+
+.podium {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  align-items: end;
+  gap: var(--space-2);
+}
+
+.podium__link {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  color: inherit;
+}
+
+.podium__avatar {
+  position: relative;
+  margin-bottom: 4px;
+}
+
+.podium__medal {
+  position: absolute;
+  right: -2px;
+  bottom: -4px;
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border: 2px solid var(--surface);
+  border-radius: 50%;
+  background: var(--fill-strong);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.podium__item--1 .podium__medal {
+  background: var(--gold);
+  color: #3d2800;
+}
+
+.podium__item--2 .podium__medal {
+  background: #c9ced6;
+  color: #2b3038;
+}
+
+.podium__item--3 .podium__medal {
+  background: #d69a6a;
+  color: #3a1f08;
+}
+
+.podium__item--1 .avatar {
+  box-shadow:
+    0 0 0 3px var(--surface),
+    0 0 0 5px var(--gold);
+}
+
+.podium__name {
+  max-width: 100%;
+  font-size: 13px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.podium__points {
+  color: var(--hint);
+  font-size: 12px;
+}
+
+.podium__step {
+  width: 100%;
+  margin-top: 4px;
+  border-radius: var(--radius-sm) var(--radius-sm) 0 0;
+  background: linear-gradient(180deg, var(--felt-soft), transparent);
+}
+
+.podium__item--1 .podium__step {
+  height: 56px;
+  background: linear-gradient(180deg, var(--gold-soft), transparent);
+}
+
+.podium__item--2 .podium__step {
+  height: 36px;
+}
+
+.podium__item--3 .podium__step {
+  height: 24px;
+}
+
+.podium__item.is-me .podium__name {
+  color: var(--link);
+}
+
+/* ───────────────────────── Профиль и статистика ───────────────────────── */
+
+.profile-head {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-2);
+  padding-top: var(--space-2);
+  text-align: center;
+}
+
+.profile-head .page-title {
+  margin-top: var(--space-1);
+}
+
+.profile-head .page-sub {
+  margin-top: 0;
+}
+
+.tiles {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-2);
+}
+
+@media (min-width: 480px) {
+  .tiles {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
+
+.tile {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: var(--space-3);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.tile__value {
+  font-size: 22px;
+  line-height: 1.2;
+  font-weight: 700;
+}
+
+.tile__label {
+  color: var(--hint);
+  font-size: 12px;
+}
+
+.tile--accent {
+  border-color: var(--line-gold);
+  background:
+    radial-gradient(120% 120% at 100% 0%, rgb(217 174 91 / 0.22), transparent 60%),
+    var(--surface-2);
+  color: var(--gold-light);
+  box-shadow: var(--glow-gold);
+}
+
+.tile--accent .tile__label {
+  color: rgb(255 255 255 / 0.75);
+}
+
+.achievements {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-2);
+}
+
+.achievement {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  grid-template-rows: auto auto;
+  column-gap: var(--space-3);
+  align-items: center;
+  padding: var(--space-3);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.achievement__icon {
+  grid-row: span 2;
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  background: var(--gold-soft);
+  font-size: 20px;
+}
+
+.achievement__title {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.achievement__hint {
+  color: var(--hint);
+  font-size: 12px;
+}
+
+.achievement.is-locked .achievement__icon {
+  background: var(--fill);
+  filter: grayscale(1);
+  opacity: 0.5;
+}
+
+.achievement.is-locked .achievement__title {
+  color: var(--hint);
+}
+
+/* ───────────────────────── Админка ───────────────────────── */
+
+.admin-status {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  font-variant-numeric: tabular-nums;
+}
+
+.editor {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.editor__toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.editor__presets {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-2);
+}
+
+.editor__presets > .field__label {
+  grid-column: 1 / -1;
+}
+
+.editor__presets > .btn {
+  white-space: nowrap;
+}
+
+/* Выбор даты и времени старта: дни мини-календарём, частое время — кнопками. */
+.pick-row {
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  padding-bottom: 2px;
+  scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
+}
+
+.pick-row::-webkit-scrollbar {
+  display: none;
+}
+
+.pick {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  min-height: 40px;
+  padding: 0 14px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-pill);
+  background: var(--fill);
+  color: var(--text);
+  font: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    background-color 0.15s,
+    border-color 0.15s,
+    transform 0.12s var(--ease);
+}
+
+.pick:active:not(:disabled) {
+  transform: scale(0.96);
+}
+
+.pick.is-active {
+  border-color: transparent;
+  background: var(--gold-gradient);
+  color: var(--on-accent);
+}
+
+.pick:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.pick--day {
+  flex-direction: column;
+  gap: 2px;
+  min-width: 54px;
+  min-height: 58px;
+  padding: 6px 8px;
+  border-radius: var(--radius);
+}
+
+.pick__top {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  opacity: 0.75;
+}
+
+.pick__day {
+  font-size: 18px;
+  font-weight: 800;
+  line-height: 1;
+}
+
+.pick-other {
+  margin-top: var(--space-2);
+}
+
+.pick-summary {
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--line-gold);
+  border-radius: var(--radius-sm);
+  background: var(--felt-soft);
+  color: var(--gold-light);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.field__hint.is-error {
+  color: var(--destructive);
+}
+
+.pick-summary.is-error {
+  border-color: rgb(229 72 77 / 0.5);
+  background: var(--danger-soft);
+  color: var(--destructive);
+}
+
+.stack--sm {
+  gap: var(--space-1);
+}
+
+/* Уровни: одна сетка для заголовка и строк — # · SB · BB · Анте · Мин · × */
+.levels__head,
+.level {
+  display: grid;
+  grid-template-columns: 22px repeat(3, minmax(0, 1fr)) 52px 32px;
+  align-items: center;
+  gap: 4px;
+}
+
+.levels__head {
+  color: var(--hint);
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.levels__head span {
+  text-align: center;
+  white-space: nowrap;
+}
+
+.levels {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.level__num {
+  color: var(--hint);
+  font-weight: 700;
+  text-align: center;
+}
+
+.level__inputs {
+  /* Поля SB/BB/Анте встают прямо в колонки общей сетки. */
+  display: contents;
+}
+
+.level .input {
+  min-height: 40px;
+  padding: 6px 2px;
+  font-size: 14px;
+  text-align: center;
+}
+
+.level .icon-btn--sm {
+  width: 32px;
+}
+
+.level__minutes {
+  position: relative;
+  display: block;
+}
+
+.level__unit {
+  display: none;
+  position: absolute;
+  top: 50%;
+  right: 8px;
+  color: var(--hint);
+  font-size: 12px;
+  transform: translateY(-50%);
+  pointer-events: none;
+}
+
+.level--break {
+  padding: 2px 0;
+  border-radius: var(--radius-sm);
+  background: var(--gold-soft);
+}
+
+.level__break-label {
+  grid-column: 2 / span 3;
+  color: var(--gold-ink);
+  font-weight: 600;
+  padding-left: var(--space-2);
+}
+
+.bullets {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.bullet {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 36px;
+  gap: var(--space-2);
+  padding: var(--space-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+}
+
+.bullet > .input {
+  grid-column: 1;
+}
+
+.bullet > .icon-btn {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  align-self: center;
+}
+
+.bullet__nums {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-2);
+}
+
+.results-editor {
+  display: flex;
+  flex-direction: column;
+}
+
+.result-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) 72px 64px;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) 0;
+}
+
+.result-row + .result-row {
+  border-top: 1px solid var(--line);
+}
+
+.result-row__name {
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.result-row__field {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.result-row__field > span {
+  color: var(--hint);
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+.result-row .input {
+  min-height: 40px;
+  padding: 8px;
+  text-align: center;
+}
+
+/* На широких экранах — подпись «мин» внутри поля. */
+@media (min-width: 480px) {
+  .levels__head,
+  .level {
+    grid-template-columns: 28px repeat(3, minmax(0, 1fr)) 88px 36px;
+    gap: var(--space-2);
+  }
+
+  .level__minutes .input {
+    padding-right: 30px;
+  }
+
+  .level__unit {
+    display: block;
+  }
+}
+
+/* ───────────────────────── Доступность и движение ───────────────────────── */
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+
+  .skeleton {
+    animation: none;
+    background: var(--fill);
+  }
+}
+
+@media (forced-colors: active) {
+  .btn,
+  .chip,
+  .badge,
+  .card,
+  .tcard {
+    border: 1px solid CanvasText;
+  }
+}

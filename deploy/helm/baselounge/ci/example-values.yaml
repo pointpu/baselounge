@@ -1,0 +1,10 @@
+# Пример значений для проверки рендера (helm lint / helm template). Секретов нет.
+gateway:
+  hostname: 203-0-113-10.sslip.io
+tls:
+  acme:
+    email: admin@example.com
+existingSecret: baselounge-secrets
+app:
+  adminIds: "123456789"
+  adminUsernames: "owner"

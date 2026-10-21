@@ -1,0 +1,32 @@
+{{- if and .Values.tls.enabled .Values.tls.issuer.create }}
+{{- $kind := .Values.tls.issuer.kind }}
+{{- if not (has $kind (list "Issuer" "ClusterIssuer")) }}
+{{- fail "tls.issuer.kind: допустимо Issuer или ClusterIssuer" }}
+{{- end }}
+{{- $server := get .Values.tls.acme.servers .Values.tls.acme.env }}
+{{- if not $server }}
+{{- fail "tls.acme.env: допустимо prod или staging" }}
+{{- end }}
+apiVersion: cert-manager.io/v1
+kind: {{ $kind }}
+metadata:
+  name: {{ include "baselounge.issuerName" . }}
+  labels:
+    {{- include "baselounge.labels" . | nindent 4 }}
+spec:
+  acme:
+    server: {{ $server }}
+    email: {{ required "tls.acme.email обязателен для ACME" .Values.tls.acme.email | quote }}
+    privateKeySecretRef:
+      name: {{ include "baselounge.issuerName" . }}-account
+    solvers:
+      - http01:
+          gatewayHTTPRoute:
+            parentRefs:
+              - kind: Gateway
+                name: {{ include "baselounge.gatewayName" . }}
+                namespace: {{ include "baselounge.gatewayNamespace" . }}
+                {{- with include "baselounge.httpSection" . }}
+                sectionName: {{ . }}
+                {{- end }}
+{{- end }}

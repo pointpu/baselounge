@@ -1,0 +1,194 @@
+# =============================================================================
+# BASE LOUNGE — значения Helm-чарта по умолчанию.
+# Реальные секреты (BOT_TOKEN, DATABASE_URL) сюда НЕ кладём: используйте
+# existingSecret (рекомендуется) или передавайте secrets.* через --set / отдельный
+# values-файл, который не коммитится.
+# =============================================================================
+
+image:
+  # Публичный образ, собирается GitHub Actions из github.com/pointpu/baselounge.
+  repository: ghcr.io/pointpu/baselounge
+  # CI публикует теги: latest (ветка main), sha-<короткий sha> (каждый пуш),
+  # <версия> и <major>.<minor> (git-теги v*). Для воспроизводимых релизов указывайте
+  # sha-<...> или версию: --set image.tag=sha-1a2b3c4. Пусто → appVersion из Chart.yaml
+  # (такой тег существует, только если был git-тег v<appVersion>).
+  tag: "latest"
+  # Always — чтобы плавающий тег latest подтягивал свежий образ при рестарте пода.
+  # При фиксированном теге можно IfNotPresent.
+  pullPolicy: Always
+
+# Для приватного реестра: [{ name: ghcr-pull }]. Для публичного ghcr.io не нужно.
+imagePullSecrets: []
+
+nameOverride: ""
+fullnameOverride: ""
+
+# ВНИМАНИЕ: реплика всегда ОДНА и не настраивается. Бот работает через long polling
+# (getUpdates), а Telegram разрешает только одного получателя на токен — второй
+# экземпляр получит 409 Conflict и будет «воровать» обновления. По той же причине
+# стратегия обновления — Recreate (старый под гасится до запуска нового).
+
+# Обычные (несекретные) переменные окружения приложения.
+app:
+  # Пусто → https://<gateway.hostname>. Должен совпадать с адресом, по которому
+  # Telegram открывает Mini App (и с доменом в BotFather).
+  webappUrl: ""
+  # Telegram ID админов через запятую, например "123456789,987654321".
+  adminIds: ""
+  # Username админов через запятую (без @). Надёжнее — adminIds.
+  adminUsernames: ""
+  clubName: "BASE LOUNGE"
+  clubCity: "Москва"
+  clubTz: "Europe/Moscow"
+  # Размер пула соединений к PostgreSQL. Учитывайте лимит соединений managed-БД.
+  dbPoolMax: 10
+  # Срок жизни initData Mini App в секундах.
+  initDataTtl: 86400
+  # Дополнительные переменные: [{ name: FOO, value: bar }].
+  extraEnv: []
+
+# Секреты (BOT_TOKEN, DATABASE_URL) попадают в контейнер через envFrom.secretRef.
+# Вариант 1 (рекомендуется): создать Secret вручную и указать его имя здесь.
+existingSecret: ""
+# Вариант 2: чарт создаст Secret <release>-secrets из этих значений (только если
+# existingSecret пуст). Заполнять через --set / --values, НЕ в этом файле.
+secrets:
+  BOT_TOKEN: ""
+  # Только приватный IP managed-PostgreSQL! Пример:
+  # postgres://user:pass@10.16.0.10:5432/baselounge
+  DATABASE_URL: ""
+
+database:
+  # Подсеть/адрес managed-PostgreSQL (используется в NetworkPolicy на egress).
+  privateCidr: 10.16.0.10/32
+  port: 5432
+
+# Аватары игроков хранятся в PostgreSQL (таблица avatars), томов приложению не нужно.
+# Единственный записываемый каталог — /tmp (emptyDir), корневая ФС только для чтения.
+tmpSizeLimit: 64Mi
+
+service:
+  type: ClusterIP
+  port: 80
+
+# Порт, который слушает приложение (переменная PORT).
+containerPort: 8000
+
+# Gateway API (Envoy Gateway).
+gateway:
+  # true → чарт создаёт собственный Gateway (Envoy Gateway поднимет под него
+  # Service type LoadBalancer с внешним балансировщиком Beget).
+  create: true
+  gatewayClassName: envoy-gateway
+  # Домен приложения. Для старта без своего домена — sslip.io от IP балансировщика,
+  # например 203-0-113-10.sslip.io.
+  hostname: ""
+  annotations: {}
+  # Использовать уже существующий Gateway (при create: false).
+  existing:
+    name: ""
+    namespace: ""
+    # Listener для HTTPS-маршрута приложения (обязателен при create: false).
+    sectionName: ""
+    # Listener HTTP для редиректа на https (пусто → редирект не создаётся).
+    httpSectionName: ""
+  # Редирект http → https. Маршрут использует PathPrefix "/", поэтому HTTPRoute
+  # ACME-солвера cert-manager (/.well-known/acme-challenge/...) более специфичен
+  # и выигрывает — выпуск сертификата продолжает работать.
+  httpsRedirect: true
+
+# Сертификат через cert-manager (ACME HTTP-01 через Gateway API).
+tls:
+  enabled: true
+  issuer:
+    # true → чарт создаёт Issuer (или ClusterIssuer, если kind: ClusterIssuer).
+    # false → используется существующий issuer с именем name.
+    create: true
+    # Issuer (namespaced, по умолчанию) или ClusterIssuer.
+    kind: Issuer
+    # Пусто → <release>-letsencrypt-<acme.env>.
+    name: ""
+  acme:
+    # staging — для проверки (сертификат недоверенный, лимиты мягкие);
+    # prod — боевой Let's Encrypt.
+    env: prod
+    # Обязателен при issuer.create: true.
+    email: ""
+    servers:
+      prod: https://acme-v02.api.letsencrypt.org/directory
+      staging: https://acme-staging-v02.api.letsencrypt.org/directory
+
+# NetworkPolicy (Cilium поддерживает стандартные networking.k8s.io/v1).
+networkPolicy:
+  enabled: true
+  # Откуда разрешён входящий трафик на containerPort: поды Envoy-прокси.
+  # Envoy Gateway запускает прокси в namespace своего контроллера (в кластере Beget —
+  # beget-envoy-gateway, в «ванильной» установке — envoy-gateway-system), а НЕ в namespace
+  # Gateway. Метки подов прокси: app.kubernetes.io/name=envoy,
+  # app.kubernetes.io/component=proxy, gateway.envoyproxy.io/owning-gateway-name=<имя Gateway>,
+  # gateway.envoyproxy.io/owning-gateway-namespace=<namespace Gateway>.
+  ingressFrom:
+    namespace: beget-envoy-gateway
+    podLabels:
+      app.kubernetes.io/name: envoy
+      app.kubernetes.io/component: proxy
+  # CoreDNS кластера (в Beget — namespace beget-coredns, метка k8s-app=coredns;
+  # в «ванильном» кластере — kube-system и k8s-app=kube-dns).
+  dns:
+    namespace: beget-coredns
+    podLabels:
+      k8s-app: coredns
+  # HTTPS наружу (api.telegram.org, файлы аватаров).
+  httpsEgressCidr: 0.0.0.0/0
+  # Исключения из httpsEgressCidr (например, приватные сети).
+  httpsEgressExcept: []
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 128Mi
+  limits:
+    memory: 384Mi
+
+probes:
+  # Даём время на миграции при старте: до 30 * 5с = 150с.
+  startup:
+    periodSeconds: 5
+    failureThreshold: 30
+    timeoutSeconds: 3
+  # readiness падает, когда БД недоступна, — под временно выводится из балансировки.
+  readiness:
+    periodSeconds: 10
+    failureThreshold: 3
+    timeoutSeconds: 3
+  # liveness щадящая: /healthz тоже проверяет БД, поэтому порог высокий
+  # (10 * 30с ≈ 5 минут), чтобы кратковременный сбой БД не перезапускал под.
+  liveness:
+    periodSeconds: 30
+    failureThreshold: 10
+    timeoutSeconds: 5
+
+podAnnotations: {}
+podLabels: {}
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  runAsGroup: 1000
+  fsGroup: 1000
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  runAsNonRoot: true
+  runAsUser: 1000
+  capabilities:
+    drop: ["ALL"]
+
+terminationGracePeriodSeconds: 30
+
+nodeSelector: {}
+tolerations: []
+affinity: {}

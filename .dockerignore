@@ -1,0 +1,27 @@
+# Всё лишнее и секретное — мимо контекста сборки.
+# .env и data/ НЕ должны попасть в образ ни при каких условиях.
+.env
+.env.*
+!.env.example
+data
+data/**
+*.db
+*.db-*
+*.sqlite
+*.sqlite3
+node_modules
+**/node_modules
+dist
+.git
+.gitignore
+.github
+.vscode
+.idea
+.DS_Store
+*.log
+coverage
+docker-compose*.yml
+compose*.yml
+Dockerfile*
+.dockerignore
+*.md

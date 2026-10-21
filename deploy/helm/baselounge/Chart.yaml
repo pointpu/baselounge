@@ -1,0 +1,13 @@
+apiVersion: v2
+name: baselounge
+description: BASE LOUNGE — Telegram-бот и Mini App покерного клуба (Node + Hono, внешний PostgreSQL, Gateway API + cert-manager)
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+home: https://github.com/pointpu/baselounge
+sources:
+  - https://github.com/pointpu/baselounge
+keywords:
+  - telegram
+  - bot
+  - mini-app

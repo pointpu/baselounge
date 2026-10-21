@@ -1,0 +1,19 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "baselounge.fullname" . }}
+  labels:
+    {{- include "baselounge.labels" . | nindent 4 }}
+data:
+  PORT: {{ .Values.containerPort | quote }}
+  WEBAPP_URL: {{ include "baselounge.webappUrl" . | quote }}
+  {{- /* Число без кавычек YAML читает как float64 (1.23456789e+08) — печатаем целым. */}}
+  {{- $ids := .Values.app.adminIds }}
+  ADMIN_IDS: {{ (kindIs "float64" $ids) | ternary (printf "%.0f" $ids) (toString $ids) | quote }}
+  ADMIN_USERNAMES: {{ .Values.app.adminUsernames | quote }}
+  CLUB_NAME: {{ .Values.app.clubName | quote }}
+  CLUB_CITY: {{ .Values.app.clubCity | quote }}
+  CLUB_TZ: {{ .Values.app.clubTz | quote }}
+  DB_POOL_MAX: {{ .Values.app.dbPoolMax | quote }}
+  INIT_DATA_TTL: {{ .Values.app.initDataTtl | quote }}
+  DEV_MODE: "false"

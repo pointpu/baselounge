@@ -1,0 +1,64 @@
+{{- if .Values.networkPolicy.enabled }}
+{{- $np := .Values.networkPolicy }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "baselounge.fullname" . }}
+  labels:
+    {{- include "baselounge.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "baselounge.selectorLabels" . | nindent 6 }}
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # Только прокси Envoy Gateway → порт приложения.
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ $np.ingressFrom.namespace }}
+          {{- with $np.ingressFrom.podLabels }}
+          podSelector:
+            matchLabels:
+              {{- toYaml . | nindent 14 }}
+          {{- end }}
+      ports:
+        - protocol: TCP
+          port: {{ .Values.containerPort }}
+  egress:
+    # DNS.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ $np.dns.namespace }}
+          {{- with $np.dns.podLabels }}
+          podSelector:
+            matchLabels:
+              {{- toYaml . | nindent 14 }}
+          {{- end }}
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    # Managed PostgreSQL по приватному IP.
+    - to:
+        - ipBlock:
+            cidr: {{ .Values.database.privateCidr }}
+      ports:
+        - protocol: TCP
+          port: {{ .Values.database.port }}
+    # HTTPS наружу: api.telegram.org, загрузка аватаров.
+    - to:
+        - ipBlock:
+            cidr: {{ $np.httpsEgressCidr }}
+            {{- with $np.httpsEgressExcept }}
+            except:
+              {{- toYaml . | nindent 14 }}
+            {{- end }}
+      ports:
+        - protocol: TCP
+          port: 443
+{{- end }}

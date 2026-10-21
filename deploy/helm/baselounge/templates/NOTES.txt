@@ -1,0 +1,23 @@
+BASE LOUNGE {{ .Chart.AppVersion }} установлен в namespace {{ .Release.Namespace }}.
+
+Образ:      {{ include "baselounge.image" . }}
+Mini App:   {{ include "baselounge.webappUrl" . }}
+Secret:     {{ include "baselounge.secretName" . }} (BOT_TOKEN, DATABASE_URL)
+
+Реплика одна, стратегия Recreate: бот работает через long polling, два экземпляра
+на один токен конфликтуют. Не масштабируйте Deployment вручную.
+
+Проверка:
+  kubectl -n {{ .Release.Namespace }} get pods,svc,httproute -l app.kubernetes.io/instance={{ .Release.Name }}
+  kubectl -n {{ .Release.Namespace }} logs deploy/{{ include "baselounge.fullname" . }} -f
+{{- if .Values.gateway.create }}
+  kubectl -n {{ .Release.Namespace }} get gateway {{ include "baselounge.fullname" . }}   # ADDRESS — внешний IP балансировщика
+{{- end }}
+{{- if .Values.tls.enabled }}
+  kubectl -n {{ .Release.Namespace }} get certificate {{ include "baselounge.fullname" . }}   # READY=True после выпуска
+{{- if eq .Values.tls.acme.env "staging" }}
+
+ВНИМАНИЕ: используется Let's Encrypt STAGING — сертификат недоверенный, Telegram
+Mini App не откроется. После успешного выпуска переключите tls.acme.env=prod.
+{{- end }}
+{{- end }}

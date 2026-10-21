@@ -1,0 +1,23 @@
+# PostgreSQL для BASE LOUNGE. Порт открыт только на этом компьютере (127.0.0.1).
+# Запуск: docker compose up -d   ·   Данные — в томе pgdata (переживают перезапуск).
+services:
+  db:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: baselounge
+      POSTGRES_USER: baselounge
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?задайте POSTGRES_PASSWORD в .env}
+      TZ: UTC
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U baselounge -d baselounge"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+volumes:
+  pgdata:

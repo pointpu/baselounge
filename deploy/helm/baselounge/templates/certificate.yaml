@@ -1,0 +1,21 @@
+{{- if .Values.tls.enabled }}
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: {{ include "baselounge.fullname" . }}
+  labels:
+    {{- include "baselounge.labels" . | nindent 4 }}
+spec:
+  # Secret должен лежать в namespace Gateway: при gateway.create=true это namespace релиза.
+  secretName: {{ include "baselounge.tlsSecretName" . }}
+  dnsNames:
+    - {{ include "baselounge.hostname" . | quote }}
+  privateKey:
+    algorithm: ECDSA
+    size: 256
+    rotationPolicy: Always
+  issuerRef:
+    group: cert-manager.io
+    kind: {{ .Values.tls.issuer.kind }}
+    name: {{ include "baselounge.issuerName" . }}
+{{- end }}

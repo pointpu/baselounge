@@ -1,0 +1,52 @@
+# Маршрут приложения на HTTPS-listener.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: {{ include "baselounge.fullname" . }}
+  labels:
+    {{- include "baselounge.labels" . | nindent 4 }}
+spec:
+  parentRefs:
+    - name: {{ include "baselounge.gatewayName" . }}
+      namespace: {{ include "baselounge.gatewayNamespace" . }}
+      sectionName: {{ include "baselounge.httpsSection" . }}
+  hostnames:
+    - {{ include "baselounge.hostname" . | quote }}
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /
+      backendRefs:
+        - name: {{ include "baselounge.fullname" . }}
+          port: {{ .Values.service.port }}
+{{- $httpSection := include "baselounge.httpSection" . }}
+{{- if and .Values.gateway.httpsRedirect $httpSection }}
+---
+# Редирект http → https на HTTP-listener. PathPrefix "/" — самый общий матч, поэтому
+# HTTPRoute ACME-солвера cert-manager (/.well-known/acme-challenge/<token>) длиннее
+# и по правилам Gateway API имеет приоритет: HTTP-01 продолжает работать.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: {{ include "baselounge.fullname" . }}-https-redirect
+  labels:
+    {{- include "baselounge.labels" . | nindent 4 }}
+spec:
+  parentRefs:
+    - name: {{ include "baselounge.gatewayName" . }}
+      namespace: {{ include "baselounge.gatewayNamespace" . }}
+      sectionName: {{ $httpSection }}
+  hostnames:
+    - {{ include "baselounge.hostname" . | quote }}
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /
+      filters:
+        - type: RequestRedirect
+          requestRedirect:
+            scheme: https
+            statusCode: 301
+{{- end }}

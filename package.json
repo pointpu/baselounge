@@ -1,0 +1,31 @@
+{
+  "name": "showdown-poker-club",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "SHOWDOWN — Telegram-бот и Mini App покерного клуба (MVP)",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "dev:server": "node --env-file-if-exists=.env --watch src/server/main.ts",
+    "dev:web": "vite",
+    "build": "vite build",
+    "start": "node --env-file-if-exists=.env src/server/main.ts",
+    "seed": "node --env-file-if-exists=.env src/server/seed.ts",
+    "typecheck": "tsc --noEmit",
+    "import:sqlite": "node --env-file-if-exists=.env src/server/import-sqlite.ts"
+  },
+  "dependencies": {
+    "@hono/node-server": "^2.1.5",
+    "grammy": "^1.46.0",
+    "hono": "^4.13.13",
+    "postgres": "^3.4.9",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.5",
+    "typescript": "^5.9.3",
+    "vite": "^8.3.4"
+  }
+}
