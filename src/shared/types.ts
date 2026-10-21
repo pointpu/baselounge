@@ -8,6 +8,10 @@ export type RegistrationStatus = 'registered' | 'waitlist' | 'cancelled';
 export type MyStatus = 'registered' | 'waitlist' | null;
 export type LeaderboardPeriod = 'season' | 'all';
 export type ClockAction = 'start' | 'pause' | 'resume' | 'reset';
+/** Разновидность техасского холдема: No-Limit, Pot-Limit, Fixed-Limit. */
+export type GameType = 'nlh' | 'plh' | 'flh';
+/** Формат турнира — выводится из структуры (см. `formatTags` в rules.ts), в базе не хранится. */
+export type FormatTag = 'bounty' | 'reentry' | 'freezeout' | 'turbo' | 'deepstack' | 'addon';
 
 export interface Achievement {
   code: string;
@@ -57,6 +61,10 @@ export interface TournamentCard {
   id: number;
   title: string;
   subtitle: string;
+  /** Разновидность холдема. */
+  game: GameType;
+  /** Форматы турнира в порядке показа (Bounty, Re-entry/Freezeout, Turbo, Deepstack, Add-on). */
+  formats: FormatTag[];
   startsAt: string;
   lateRegUntil: string | null;
   status: TournamentStatus;
@@ -152,6 +160,8 @@ export interface TournamentInput {
   title: string;
   subtitle?: string;
   description?: string;
+  /** По умолчанию — 'nlh'. */
+  game?: GameType;
   startsAt: string;
   lateRegUntil?: string | null;
   capacity: number;

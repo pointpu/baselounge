@@ -12,6 +12,7 @@ import * as home from './views/home.ts';
 import * as player from './views/player.ts';
 import * as profile from './views/profile.ts';
 import * as rating from './views/rating.ts';
+import * as rules from './views/rules.ts';
 import * as tournament from './views/tournament.ts';
 import * as tournaments from './views/tournaments.ts';
 
@@ -45,6 +46,7 @@ const ROUTES: readonly Route[] = [
   route('/rating', { tab: 'rating', parent: null, view: rating.render }),
   route('/p/:id', { tab: 'rating', parent: '/rating', view: player.render }),
   route('/me', { tab: 'me', parent: null, view: profile.render }),
+  route('/rules', { tab: 'home', parent: '/', view: rules.render }),
   route('/admin', { tab: 'admin', parent: null, adminOnly: true, view: admin.render }),
   route('/admin/new', { tab: 'admin', parent: '/admin', adminOnly: true, extra: { mode: 'new' }, view: admin.render }),
   route('/admin/t/:id', { tab: 'admin', parent: '/admin', adminOnly: true, view: admin.render }),

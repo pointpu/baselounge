@@ -7,7 +7,7 @@ import { api, errorMessage } from '../api.ts';
 import { me, setMe } from '../state.ts';
 import { haptic, requestContact } from '../tg.ts';
 import { errorState, h, icon, openSheet, refreshView, setChildren, skeleton, toast } from '../ui.ts';
-import { avatar, statsBlock } from '../widgets.ts';
+import { avatar, rulesLink, statsBlock } from '../widgets.ts';
 
 const MAX_AVATAR_BYTES = 2 * 1024 * 1024;
 const AVATAR_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
@@ -160,7 +160,7 @@ export async function render(root: HTMLElement): Promise<void> {
     setChildren(phoneSlot, phoneCard(drawHead));
   };
   drawHead();
-  setChildren(root, headSlot, phoneSlot, statsSlot);
+  setChildren(root, headSlot, phoneSlot, statsSlot, rulesLink());
 
   try {
     const stats = await api.myStats();

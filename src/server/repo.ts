@@ -7,7 +7,7 @@
  * Время — ISO-строки UTC, jsonb-поля — уже разобранные массивы.
  */
 import type postgres from 'postgres';
-import type { BlindLevel, Bullet, RegistrationStatus, TournamentStatus } from '../shared/types.ts';
+import type { BlindLevel, Bullet, GameType, RegistrationStatus, TournamentStatus } from '../shared/types.ts';
 import { db } from './db.ts';
 import { nowIso } from './time.ts';
 
@@ -31,6 +31,8 @@ export interface TournamentRow {
   title: string;
   subtitle: string;
   description: string;
+  /** Разновидность холдема (migration 003). */
+  game: GameType;
   starts_at: string;
   late_reg_until: string | null;
   status: TournamentStatus;
@@ -254,6 +256,7 @@ export interface TournamentFields {
   title: string;
   subtitle: string;
   description: string;
+  game: GameType;
   starts_at: string;
   late_reg_until: string | null;
   status: TournamentStatus;
@@ -270,9 +273,9 @@ export interface TournamentFields {
 
 export async function insertTournament(f: TournamentFields): Promise<number> {
   const [row] = await db()<{ id: number }[]>`
-    INSERT INTO tournaments (title, subtitle, description, starts_at, late_reg_until, status, capacity, buy_in,
+    INSERT INTO tournaments (title, subtitle, description, game, starts_at, late_reg_until, status, capacity, buy_in,
       starting_stack, knockout_points, table_size, dealer, reentries, addons, blind_levels, created_at)
-    VALUES (${f.title}, ${f.subtitle}, ${f.description}, ${f.starts_at}, ${f.late_reg_until}, ${f.status}, ${f.capacity},
+    VALUES (${f.title}, ${f.subtitle}, ${f.description}, ${f.game}, ${f.starts_at}, ${f.late_reg_until}, ${f.status}, ${f.capacity},
       ${f.buy_in}, ${f.starting_stack}, ${f.knockout_points}, ${f.table_size}, ${f.dealer},
       ${jsonb(f.reentries)}, ${jsonb(f.addons)}, ${jsonb(f.blind_levels)}, ${nowIso()})
     RETURNING id`;
@@ -282,7 +285,7 @@ export async function insertTournament(f: TournamentFields): Promise<number> {
 export async function updateTournamentFields(id: number, f: TournamentFields): Promise<void> {
   await db()`
     UPDATE tournaments SET
-      title = ${f.title}, subtitle = ${f.subtitle}, description = ${f.description}, starts_at = ${f.starts_at},
+      title = ${f.title}, subtitle = ${f.subtitle}, description = ${f.description}, game = ${f.game}, starts_at = ${f.starts_at},
       late_reg_until = ${f.late_reg_until}, status = ${f.status}, capacity = ${f.capacity}, buy_in = ${f.buy_in},
       starting_stack = ${f.starting_stack}, knockout_points = ${f.knockout_points}, table_size = ${f.table_size},
       dealer = ${f.dealer}, reentries = ${jsonb(f.reentries)}, addons = ${jsonb(f.addons)},

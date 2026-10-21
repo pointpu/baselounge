@@ -24,6 +24,7 @@ import * as repo from '../repo.ts';
 import type { PlayerRow, RegistrationRow, TournamentFields, TournamentRow } from '../repo.ts';
 import { HOUR_MS, nowIso, toIso } from '../time.ts';
 import { START_GRACE_MIN, levelsError, sameLevels, sameMinute, scheduleError } from '../../shared/rules.ts';
+import { rowFormats } from './formats.ts';
 import { clockState } from './clock.ts';
 import { notifyLater } from './notifier.ts';
 import { briefBuilder } from './ratings.ts';
@@ -123,6 +124,8 @@ function toCard(t: TournamentRow, ctx: ViewerContext): TournamentCard {
     id: t.id,
     title: t.title,
     subtitle: t.subtitle,
+    game: t.game,
+    formats: rowFormats(t),
     startsAt: t.starts_at,
     lateRegUntil: t.late_reg_until,
     status: t.status,
@@ -289,6 +292,7 @@ function toFields(input: TournamentInput, status: TournamentStatus, checks: Fiel
     title: input.title.trim(),
     subtitle: input.subtitle?.trim() ?? '',
     description: input.description?.trim() ?? '',
+    game: input.game ?? 'nlh',
     starts_at: startsAt,
     late_reg_until: lateRegUntil,
     status,
@@ -310,6 +314,7 @@ function rowToInput(t: TournamentRow): TournamentInput {
     title: t.title,
     subtitle: t.subtitle,
     description: t.description,
+    game: t.game,
     startsAt: t.starts_at,
     lateRegUntil: t.late_reg_until,
     capacity: t.capacity,

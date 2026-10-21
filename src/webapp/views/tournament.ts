@@ -1,6 +1,7 @@
 /**
- * Экран турнира: шапка, чипы, «Ваше место», живые часы, структура и блайнды,
- * участники и очередь, результаты, .ics. Главное действие — MainButton.
+ * Экран турнира: шапка, чипы, теги игры/формата, лента фаз, «Ваше место», живые часы,
+ * подсказки «Ход игры», структура и блайнды, участники и очередь, результаты, .ics.
+ * Главное действие — MainButton.
  */
 import type { BlindLevel, Bullet, TournamentDetail } from '../../shared/types.ts';
 import { api, calendarUrl, errorMessage } from '../api.ts';
@@ -25,7 +26,8 @@ import {
   toast,
 } from '../ui.ts';
 import type { Cleanup, Params } from '../ui.ts';
-import { avatar, blindsText, clockWidget, seatsLabel, statusBadge } from '../widgets.ts';
+import { GAME_LABELS, gameHints, isBbAnte, phaseTimeline, playableNumber } from '../../shared/rules.ts';
+import { avatar, blindsText, clockWidget, formatTags, hintRows, phaseStrip, rulesLink, seatsLabel, statusBadge } from '../widgets.ts';
 import type { ClockWidget } from '../widgets.ts';
 
 const POLL_MS = 15_000;
@@ -124,6 +126,7 @@ function structure(d: TournamentDetail): HTMLElement {
     h(
       'dl',
       { class: 'card info' },
+      infoRow('Игра', GAME_LABELS[d.game]),
       d.startingStack ? infoRow('Стартовый стек', `${fmtNum(d.startingStack)} фишек`) : null,
       infoRow('Бай-ин', fmtMoney(d.buyIn)),
       d.lateRegUntil ? infoRow('Поздняя регистрация', `до ${fmtTime(d.lateRegUntil)}`) : null,
@@ -133,10 +136,20 @@ function structure(d: TournamentDetail): HTMLElement {
         ? infoRow('Уровни', `${playable.length} · ${playable[0]?.minutes ?? 0} мин`)
         : null,
       totalMin ? infoRow('Длительность структуры', fmtDuration(totalMin)) : null,
+      anteRow(d.blindLevels),
       bulletsRows('Ре‑энтри', d.reentries),
       bulletsRows('Add-on', d.addons),
     ),
   );
+}
+
+/** «С уровня 4 · BB-анте» — когда в структуре появляется анте. */
+function anteRow(levels: readonly BlindLevel[]): HTMLElement | null {
+  const idx = levels.findIndex((l) => !l.isBreak && l.ante > 0);
+  const level = levels[idx];
+  if (!level) return null;
+  const allBb = levels.slice(idx).every((l) => l.isBreak || isBbAnte(l));
+  return infoRow('Анте', `с ур. ${playableNumber(levels, idx)}${allBb ? ' · BB-анте' : ''}`);
 }
 
 function blindsTable(levels: readonly BlindLevel[], currentIndex: number | null): HTMLElement | null {
@@ -153,7 +166,7 @@ function blindsTable(levels: readonly BlindLevel[], currentIndex: number | null)
       { class: current ? 'is-current' : null, attrs: { 'aria-current': current ? 'step' : null } },
       h('td', null, String(n)),
       h('td', null, blindsText(l)),
-      h('td', null, l.ante ? fmtNum(l.ante) : '—'),
+      h('td', { class: isBbAnte(l) ? 'is-bb-ante' : null }, isBbAnte(l) ? 'BB-анте' : l.ante ? fmtNum(l.ante) : '—'),
       h('td', null, String(l.minutes)),
     );
   });
@@ -308,9 +321,37 @@ export async function render(root: HTMLElement, params: Params): Promise<Cleanup
     };
   };
 
+  // «Ход игры» и лента фаз пересчитываются каждую секунду (отсчёты), DOM меняется только при смене текста.
+  const phasesSlot = h('div', { class: 'detail-head__phases' });
+  const hintsList = h('div', { class: 'card hints' });
+  const hintsSection = h('section', null, sectionTitle('Ход игры'), hintsList);
+  let hintsKey = '';
+  let phasesKey = '';
+  const refreshLive = (): void => {
+    const d = detail;
+    const now = Date.now();
+    const c = clock?.current() ?? null;
+    const hints = gameHints(d, c, now, { fmtTime });
+    const hk = JSON.stringify(hints);
+    if (hk !== hintsKey) {
+      hintsKey = hk;
+      setChildren(hintsList, hintRows(hints));
+      hintsSection.hidden = hints.length === 0;
+    }
+    const steps = phaseTimeline(d, c, now);
+    const pk = JSON.stringify(steps);
+    if (pk !== phasesKey) {
+      phasesKey = pk;
+      setChildren(phasesSlot, phaseStrip(steps));
+    }
+  };
+
   const draw = (): void => {
     const d = detail;
     clock = d.status === 'running' && d.clock ? clockWidget(d.blindLevels, d.clock) : null;
+    hintsKey = '';
+    phasesKey = '';
+    refreshLive();
     setChildren(
       root,
       h(
@@ -327,16 +368,20 @@ export async function render(root: HTMLElement, params: Params): Promise<Cleanup
           chip('people', seatsLabel(d)),
           d.startingStack ? chip('stack', `${fmtNum(d.startingStack)} фишек`) : null,
         ),
+        formatTags(d),
+        phasesSlot,
       ),
       myBanner(d),
       notice(d),
       clock ? h('section', null, clock.el) : null,
+      hintsSection,
       results(d),
       d.description ? h('section', { class: 'card card--pad prose' }, d.description) : null,
       structure(d),
       blindsTable(d.blindLevels, d.clock && d.status === 'running' ? d.clock.levelIndex : null),
       people(d),
       calendarButton(d),
+      rulesLink(),
       me().isAdmin
         ? h('a', { class: 'btn btn--ghost btn--block', href: `#/admin/t/${d.id}` }, icon('shield', 20), 'Управлять турниром')
         : null,
@@ -366,7 +411,10 @@ export async function render(root: HTMLElement, params: Params): Promise<Cleanup
   if (!root.isConnected) return;
   draw();
 
-  const tick = window.setInterval(() => clock?.tick(), 1000);
+  const tick = window.setInterval(() => {
+    clock?.tick();
+    refreshLive();
+  }, 1000);
   const poll = window.setInterval(() => {
     if (document.hidden || detail.status !== 'running') return;
     api
@@ -383,7 +431,10 @@ export async function render(root: HTMLElement, params: Params): Promise<Cleanup
           Boolean(next.results) !== Boolean(detail.results);
         detail = next;
         if (structural || !clock || !next.clock) draw();
-        else clock.set(next.clock);
+        else {
+          clock.set(next.clock);
+          refreshLive();
+        }
       })
       .catch(() => undefined);
   }, POLL_MS);

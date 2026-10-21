@@ -11,6 +11,7 @@ import {
   emptyState,
   errorState,
   fmtMoney,
+  fmtTime,
   fmtUntil,
   fmtWhen,
   greeting,
@@ -22,7 +23,8 @@ import {
   skeleton,
 } from '../ui.ts';
 import type { Cleanup } from '../ui.ts';
-import { clockWidget, myStatusBadge, podium, seatsLabel, tournamentCard } from '../widgets.ts';
+import { gameHints } from '../../shared/rules.ts';
+import { clockWidget, formatLine, hintRows, myStatusBadge, podium, rulesLink, seatsLabel, tournamentCard } from '../widgets.ts';
 
 const POLL_MS = 15_000;
 
@@ -71,6 +73,7 @@ function upcomingHero(card: TournamentCard, timers: number[]): HTMLElement {
     h('div', { class: 'hero__eyebrow' }, 'Ближайший турнир'),
     h('div', { class: 'hero__title' }, card.title),
     card.subtitle ? h('div', { class: 'hero__sub' }, card.subtitle) : null,
+    h('div', { class: 'hero__meta' }, formatLine(card)),
     until,
     tiles.el,
     h(
@@ -99,22 +102,42 @@ async function liveHero(card: TournamentCard, timers: number[]): Promise<HTMLEle
     icon('chevron', 20),
   );
   if (!detail.clock) {
-    return h('a', { class: 'hero', href: `#/t/${card.id}` }, header, h('div', { class: 'hero__until' }, 'Турнир идёт — часы скоро запустят'));
+    return h('a', { class: 'hero', href: `#/t/${card.id}` }, header, h('div', { class: 'hero__until' }, detail.blindLevels.length ? 'Турнир идёт — часы скоро запустят' : 'Турнир идёт'));
   }
   const clock = clockWidget(detail.blindLevels, detail.clock);
-  timers.push(window.setInterval(() => clock.tick(), 1000));
+  let current = detail;
+  // Одна главная подсказка «Ход игры» под часами (перерыв, поздняя рег., рост блайндов…).
+  const hintSlot = h('div', { class: 'hero__hint' });
+  let hintKey = '';
+  const refreshHint = (): void => {
+    const hints = gameHints(current, clock.current(), Date.now(), { fmtTime, limit: 1 });
+    const key = JSON.stringify(hints);
+    if (key === hintKey) return;
+    hintKey = key;
+    setChildren(hintSlot, hintRows(hints));
+    hintSlot.hidden = hints.length === 0;
+  };
+  refreshHint();
+  timers.push(
+    window.setInterval(() => {
+      clock.tick();
+      refreshHint();
+    }, 1000),
+  );
   timers.push(
     window.setInterval(() => {
       if (document.hidden) return;
       api
         .tournament(card.id)
         .then((d) => {
+          current = d;
           if (d.clock) clock.set(d.clock);
+          refreshHint();
         })
         .catch(() => undefined);
     }, POLL_MS),
   );
-  return h('a', { class: 'hero hero--live', href: `#/t/${card.id}` }, header, clock.el);
+  return h('a', { class: 'hero hero--live', href: `#/t/${card.id}` }, header, clock.el, hintSlot);
 }
 
 function podiumSection(board: Leaderboard): HTMLElement {
@@ -147,7 +170,7 @@ export async function render(root: HTMLElement): Promise<Cleanup> {
   const heroSlot = h('section', null, skeleton(1, 220));
   const mineSlot = h('section');
   const podiumSlot = h('section', null, skeleton(1, 180));
-  setChildren(root, head, heroSlot, mineSlot, podiumSlot);
+  setChildren(root, head, heroSlot, mineSlot, podiumSlot, h('section', null, rulesLink()));
 
   const [upcoming, board] = await Promise.allSettled([api.tournaments('upcoming'), api.leaderboard('season')]);
   if (!root.isConnected) return cleanup;

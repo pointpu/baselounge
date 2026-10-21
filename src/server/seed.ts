@@ -96,6 +96,8 @@ async function createDemoTournament(d: DemoTournament): Promise<repo.TournamentR
     title: d.title,
     subtitle: d.subtitle,
     description: d.description,
+    // Клуб играет No-Limit Hold'em; другие разновидности задаются в админке.
+    game: 'nlh',
     starts_at: d.startsAt,
     late_reg_until: d.lateRegUntil,
     status: d.status,
@@ -231,7 +233,8 @@ async function seed(): Promise<void> {
     capacity: 18,
     buyIn: 2000,
     startingStack: 25_000,
-    knockoutPoints: 5,
+    // Без нокаутов: из предстоящих Bounty — только «Bounty-вечер».
+    knockoutPoints: 0,
     tableSize: 6,
     reentries: REENTRY,
     addons: ADDON,

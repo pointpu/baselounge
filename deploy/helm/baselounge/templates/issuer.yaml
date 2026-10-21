@@ -16,7 +16,10 @@ metadata:
 spec:
   acme:
     server: {{ $server }}
-    email: {{ required "tls.acme.email обязателен для ACME" .Values.tls.acme.email | quote }}
+    {{- with .Values.tls.acme.email }}
+    # Необязателен: на этот адрес Let's Encrypt шлёт предупреждения об истечении сертификата.
+    email: {{ . | quote }}
+    {{- end }}
     privateKeySecretRef:
       name: {{ include "baselounge.issuerName" . }}-account
     solvers:

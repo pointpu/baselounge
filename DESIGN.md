@@ -145,6 +145,7 @@ players(id integer identity PK, tg_id bigint UNIQUE NOT NULL, username text, fir
   avatarUrl = avatar_file нового формата ? `/media/avatars/${avatar_file}` : tg_photo_url
 
 tournaments(id integer identity PK, title text, subtitle text DEFAULT '', description text DEFAULT '',
+        game text DEFAULT 'nlh' CHECK in (nlh,plh,flh)  -- миграция 003: No-Limit / Pot-Limit / Fixed-Limit Hold'em
         starts_at timestamptz, late_reg_until timestamptz NULL,
         status text CHECK in (draft,registration,running,completed,cancelled),
         capacity integer CHECK > 0, buy_in integer (₽, 0 = бесплатно), starting_stack integer NULL,
@@ -201,6 +202,16 @@ results(id identity PK, tournament_id FK CASCADE, player_id FK CASCADE, place in
   столов = ceil(n / tableSize); перемешать, раздать по кругу (размеры столов отличаются ≤ 1), места внутри стола перемешать.
 - `clockState(levels, startedAt, pausedAt, pausedTotalSec, now)` → `ClockState | null`.
 - `tournamentIcs(t, url)` → строка VCALENDAR/VEVENT (UID `showdown-t<id>`, длительность 4 ч, CRLF, экранирование).
+- `src/shared/rules.ts` (общие для сервера и Mini App, без БД):
+  - `formatTags(t)` → `FormatTag[]`: Bounty (`knockoutPoints > 0`), Re-entry (есть ре-энтри) иначе Freezeout,
+    Turbo (первый игровой уровень ≤ 12 мин), Deepstack (стек / BB первого уровня ≥ 200), Add-on (есть аддоны).
+    Форматы в базе не хранятся — сервер отдаёт их в `TournamentCard.formats`, бот пишет строкой «NLH · Bounty · Re-entry».
+  - `isBbAnte(level)` — анте = BB («BB-анте» в таблице блайндов, часах и подсказках).
+  - `gameHints(detail, clock, nowMs, { fmtTime, limit })` → 1–3 подсказки «Ход игры» `{ icon, text, tone }` по убыванию
+    важности: пауза, лист ожидания, закрытие поздней регистрации, перерыв/add-on, удвоение блайндов, старт анте,
+    последний уровень, свободные места; до старта — «До старта …», «Поздняя рег. до …». Тексты рассчитаны на одну строку.
+  - `phaseTimeline(detail, clock, nowMs)` → лента фаз Регистрация → Игра → Рег. закрыта / Перерыв (Add-on) → Итоги
+    (средние шаги — в хронологическом порядке, отсутствующие пропускаются).
 - `achievements(stats)`: first_win 🏆 «Первая победа» (wins ≥ 1), finalist 🎯 «Финалист» (финальных столов ≥ 3),
   hunter 🔪 «Охотник» (нокаутов ≥ 10), regular ♣ «Завсегдатай» (турниров ≥ 10).
 
@@ -215,7 +226,9 @@ interface BlindLevel { sb: number; bb: number; ante: number; minutes: number; is
 interface Bullet { stack: number; price: number; note: string }
 interface ClockState { levelIndex: number; level: BlindLevel; nextLevel: BlindLevel | null;
   remainingSec: number; elapsedSec: number; paused: boolean; finished: boolean; totalLevels: number }
-interface TournamentCard { id; title; subtitle; startsAt: string; lateRegUntil: string | null; status;
+type GameType = 'nlh' | 'plh' | 'flh';
+type FormatTag = 'bounty' | 'reentry' | 'freezeout' | 'turbo' | 'deepstack' | 'addon';
+interface TournamentCard { id; title; subtitle; game: GameType; formats: FormatTag[]; startsAt: string; lateRegUntil: string | null; status;
   capacity; registeredCount; waitlistCount; freeSeats; buyIn; startingStack: number | null;
   myStatus: MyStatus; myWaitlistPosition: number | null; mySeat: { table: number; seat: number } | null;
   canRegister: boolean }
@@ -295,19 +308,24 @@ interface Notifier {
 
 ## UX Mini App
 
-- Hash-роутер: `#/`, `#/tournaments`, `#/t/:id`, `#/rating`, `#/me`, `#/p/:id`, `#/admin`, `#/admin/t/:id`, `#/admin/new`.
+- Hash-роутер: `#/`, `#/tournaments`, `#/t/:id`, `#/rating`, `#/me`, `#/p/:id`, `#/rules`, `#/admin`, `#/admin/t/:id`, `#/admin/new`.
 - Таб-бар: Афиша · Турниры · Рейтинг · Профиль (+ Админ, если isAdmin). На детальных экранах — Telegram BackButton.
 - MainButton = главное действие на экране турнира (Записаться / Встать в лист ожидания / Отменить запись — с `showConfirm`).
   В обычном браузере — кнопка на странице.
 - Тема: CSS-переменные `--tg-theme-*` с фолбэками; акцент «сукно» #1E9E6A и «фишка» #E8B04B; системный шрифт;
   сетка 8 pt; карточки с тонкой рамкой; тач-цели ≥ 44 px; `prefers-reduced-motion`.
 - Афиша: приветствие; hero «ближайший турнир» с живым отсчётом («через 2 ч 14 мин») или LIVE-карточка часов
-  (крупные блайнды, таймер, следующий уровень), «Мои записи», мини-пьедестал топ-3 месяца.
-- Турнир: шапка, чипы (дата, бай-ин/FREE, места), баннер «Ваше место», живые часы, структура, таблица блайндов (сворачиваемая),
-  ре-энтри/add-on, участники с аватарами (+ очередь), результаты, «Добавить в календарь» (.ics).
+  (крупные блайнды, таймер, следующий уровень, одна главная подсказка «Ход игры»), «Мои записи», мини-пьедестал топ-3 месяца.
+  В карточках турниров — строка «NLH · Bounty · Re-entry» (одна строка, лишнее — многоточием).
+- Турнир: шапка, чипы (дата, бай-ин/FREE, места), теги игры и формата, лента фаз, баннер «Ваше место», живые часы,
+  «Ход игры» (1–3 подсказки, обновляются каждую секунду), структура (игра, анте/BB-анте), таблица блайндов (сворачиваемая),
+  ре-энтри/add-on, участники с аватарами (+ очередь), результаты, «Добавить в календарь» (.ics), ссылка на правила.
+- Правила (`#/rules`): ход раздачи, комбинации с мини-картами, позиции, термины турнира, NLH/PLH/FLH, очки рейтинга;
+  сворачиваемые разделы. Ссылки — с афиши, профиля и экрана турнира.
 - Рейтинг: сегмент Месяц/Всё время, пьедестал топ-3, поиск, строки → профиль игрока.
 - Профиль: аватар (тап — сменить), никнейм (bottom sheet), подтверждение телефона (`requestContact`), плитки статистики, ачивки, история.
-- Админ: список со статусами + «Новый турнир»; форма (все поля; редактор уровней блайндов с пресетами «Турбо / Стандарт»);
+- Админ: список со статусами + «Новый турнир»; форма (все поля, включая игру No-Limit / Pot-Limit / Fixed-Limit; редактор уровней
+  блайндов с пресетами «Турбо / Стандарт / BB-анте» — последний ставит анте = BB с выбранного уровня текущей структуры);
   действия: открыть регистрацию, старт, отмена, рассадка, часы, ввод результатов (список зарегистрированных: место + нокауты).
 - Состояния: скелетоны, понятные пустые состояния, ошибки, toast, haptics.
 - Разработка в браузере: без initData — параметр `?dev_user=<id>` (сохранять в sessionStorage) → заголовок `X-Dev-User`.

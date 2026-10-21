@@ -112,7 +112,7 @@ tls:
     # staging — для проверки (сертификат недоверенный, лимиты мягкие);
     # prod — боевой Let's Encrypt.
     env: prod
-    # Обязателен при issuer.create: true.
+    # Необязателен: адрес для писем Let's Encrypt об истечении сертификата.
     email: ""
     servers:
       prod: https://acme-v02.api.letsencrypt.org/directory

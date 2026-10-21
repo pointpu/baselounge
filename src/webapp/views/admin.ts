@@ -9,6 +9,7 @@ import type {
   BlindLevel,
   Bullet,
   ClockAction,
+  GameType,
   ResultEntryInput,
   TournamentCard,
   TournamentDetail,
@@ -27,6 +28,7 @@ import {
   h,
   icon,
   isoToClubInput,
+  openSheet,
   plural,
   refreshView,
   sectionTitle,
@@ -37,7 +39,16 @@ import {
 } from '../ui.ts';
 import type { Cleanup, Params } from '../ui.ts';
 import { clubTz } from '../state.ts';
-import { MAX_DAYS_AHEAD, START_GRACE_MIN, lateRegOptions, levelsError, sameLevels, sameMinute, scheduleError } from '../../shared/rules.ts';
+import {
+  GAME_LABELS,
+  MAX_DAYS_AHEAD,
+  START_GRACE_MIN,
+  lateRegOptions,
+  levelsError,
+  sameLevels,
+  sameMinute,
+  scheduleError,
+} from '../../shared/rules.ts';
 import { avatar, blindsText, clockWidget, statusBadge, tournamentCard } from '../widgets.ts';
 import type { ClockWidget } from '../widgets.ts';
 
@@ -163,8 +174,8 @@ function preset(minutes: number, breakEvery: number, breakMin: number): BlindLev
 }
 
 const PRESETS = [
-  { label: 'Турбо', hint: '10 мин', build: () => preset(10, 6, 5) },
-  { label: 'Стандарт', hint: '20 мин', build: () => preset(20, 4, 10) },
+  { label: 'Турбо', build: () => preset(10, 6, 5) },
+  { label: 'Стандарт', build: () => preset(20, 4, 10) },
 ] as const;
 
 /** Округление до «красивых» значений блайндов. */
@@ -310,16 +321,62 @@ function blindLevelsEditor(initial: readonly BlindLevel[], onChange: () => void 
           },
         },
       },
-      `${p.label} · ${p.hint}`,
+      p.label,
     ),
   );
+
+  /**
+   * «BB-анте» — не замена структуры, а правка текущей: с выбранного уровня анте = большому блайнду,
+   * до него — без анте (типичная современная структура NLH). Пустую структуру сначала заполняем стандартной.
+   */
+  const applyBbAnte = (): void => {
+    if (!rows.length) setAll(preset(20, 4, 10));
+    const playable = rows.filter((r) => !r.isBreak);
+    const firstAnte = playable.findIndex((r) => (intOf(r.ante) ?? 0) > 0);
+    const select = h(
+      'select',
+      { class: 'input select', ariaLabel: 'С какого уровня BB-анте' },
+      playable.map((r, i) =>
+        h('option', { value: String(i + 1), selected: i === Math.max(0, firstAnte) }, `Уровень ${i + 1} · ${r.sb.value || '?'}/${r.bb.value || '?'}`),
+      ),
+    );
+    openSheet({
+      title: 'BB-анте',
+      submitLabel: 'Применить',
+      content: h(
+        'div',
+        { class: 'stack' },
+        h('p', { class: 'muted' }, 'Анте за весь стол платит большой блайнд, суммой в один BB. До выбранного уровня анте не будет.'),
+        h('div', { class: 'field' }, h('span', { class: 'field__label' }, 'С уровня'), select),
+      ),
+      onSubmit: () => {
+        const from = Number(select.value);
+        let n = 0;
+        for (const row of rows) {
+          if (row.isBreak) continue;
+          n += 1;
+          row.ante.value = n >= from ? row.bb.value : '0';
+        }
+        renumber();
+        haptic.success();
+        toast(`BB-анте с уровня ${from}`, 'success');
+      },
+    });
+  };
+  presetButtons.push(h('button', { type: 'button', class: 'btn btn--soft btn--sm', on: { click: applyBbAnte } }, 'BB-анте'));
 
   setAll(initial);
 
   const el = h(
     'div',
     { class: 'editor' },
-    h('div', { class: 'editor__presets' }, h('span', { class: 'field__label' }, 'Пресеты'), presetButtons),
+    h(
+      'div',
+      { class: 'editor__presets' },
+      h('span', { class: 'field__label' }, 'Пресеты'),
+      presetButtons,
+      h('p', { class: 'field__hint editor__presets-hint' }, 'Турбо — по 10 мин, Стандарт — по 20 мин, BB‑анте — анте = BB с выбранного уровня.'),
+    ),
     h(
       'div',
       { class: 'levels__head', attrs: { 'aria-hidden': 'true' } },
@@ -696,6 +753,21 @@ function tournamentForm(initial: TournamentDetail | null, save: (input: Tourname
   const tableSize = numInput(initial?.tableSize ?? 9, { min: 2, max: 10, required: true });
   const dealer = h('input', { class: 'input', value: initial?.dealer ?? '', maxLength: 80, placeholder: 'Например, Анна' });
   const openNow = h('input', { type: 'checkbox', class: 'check__input', checked: true });
+  let game: GameType = initial?.game ?? 'nlh';
+  const gameHint = h('p', { class: 'field__hint' }, GAME_LABELS[game]);
+  const gameSwitch = segmented<GameType>(
+    [
+      { value: 'nlh', label: 'No-Limit' },
+      { value: 'plh', label: 'Pot-Limit' },
+      { value: 'flh', label: 'Fixed-Limit' },
+    ],
+    game,
+    (v) => {
+      game = v;
+      gameHint.textContent = GAME_LABELS[v];
+    },
+    'Разновидность холдема',
+  );
 
   // Поздняя регистрация зависит и от старта, и от структуры — пересчитываем при любом изменении.
   let lateReg: LateRegPicker | null = null;
@@ -722,6 +794,7 @@ function tournamentForm(initial: TournamentDetail | null, save: (input: Tourname
     h(
       'section',
       { class: 'card card--pad stack' },
+      h('div', { class: 'field' }, h('span', { class: 'field__label' }, 'Игра'), gameSwitch, gameHint),
       start.el,
       lateReg.el,
       h(
@@ -780,6 +853,7 @@ function tournamentForm(initial: TournamentDetail | null, save: (input: Tourname
       title: title.value.trim(),
       subtitle: subtitle.value.trim(),
       description: description.value.trim(),
+      game,
       startsAt: startIso,
       lateRegUntil: lateIso,
       capacity: intOf(capacity) ?? 2,

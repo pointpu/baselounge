@@ -1168,7 +1168,12 @@ input[type='number'] {
 
 .segmented__item {
   flex: 1;
+  min-width: 0;
   min-height: 38px;
+  padding: 0 6px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   border: 0;
   border-radius: var(--radius-sm);
   background: transparent;
@@ -2163,15 +2168,21 @@ input[type='number'] {
 
 .editor__presets {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  /* Три равные кнопки: «Турбо · Стандарт · BB-анте» — в одну строку даже на 320 px. */
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: var(--space-2);
 }
 
-.editor__presets > .field__label {
+.editor__presets > .field__label,
+.editor__presets > .editor__presets-hint {
   grid-column: 1 / -1;
 }
 
 .editor__presets > .btn {
+  min-width: 0;
+  padding: 0 var(--space-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
@@ -2444,6 +2455,552 @@ input[type='number'] {
   .level__unit {
     display: block;
   }
+}
+
+/* ───────────────────────── Игра и формат ───────────────────────── */
+
+/* Строка «NLH · Bounty · Re-entry» в карточке и hero — всегда одна строка, лишнее — многоточием. */
+.tcard__meta,
+.hero__meta {
+  overflow: hidden;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tcard__meta {
+  margin-top: 2px;
+  color: var(--gold);
+}
+
+.hero__meta {
+  color: var(--gold-light);
+}
+
+/* Теги шапки турнира: одна линия; не влезли — листаются вбок, без переноса. */
+.tags {
+  display: flex;
+  flex-wrap: nowrap;
+  gap: 4px;
+  overflow-x: auto;
+  scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
+}
+
+.tags::-webkit-scrollbar {
+  display: none;
+}
+
+.tag {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  min-height: 24px;
+  padding: 0 8px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-pill);
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+}
+
+.tag--game {
+  border-color: var(--line-gold);
+  background: var(--gold-soft);
+  color: var(--gold-ink);
+}
+
+.tag--bounty {
+  border-color: rgb(229 72 77 / 0.4);
+  color: #ff9a9d;
+}
+
+.tag--turbo,
+.tag--deepstack {
+  border-color: var(--line-gold);
+  color: var(--gold-light);
+}
+
+.tag--freezeout {
+  color: var(--hint);
+}
+
+/* Лента фаз: точки и подписи в одну линию, текущая — золотом. */
+.detail-head__phases:empty {
+  display: none;
+}
+
+.phases {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 0;
+  margin-top: var(--space-1);
+  padding: 2px 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.phases::-webkit-scrollbar {
+  display: none;
+}
+
+.phase {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  color: var(--hint);
+  font-size: 11.5px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+/* Соединительные линии тянутся и заполняют остаток ширины — лента ровно во всю строку. */
+.phase + .phase {
+  flex: 1 0 auto;
+}
+
+.phase + .phase::before {
+  content: '';
+  flex: 1 0 6px;
+  height: 1px;
+  margin: 0 3px;
+  background: var(--line-strong);
+}
+
+.phase.is-done {
+  color: rgb(245 242 234 / 0.62);
+}
+
+.phase.is-done + .phase::before {
+  background: var(--gold-deep);
+}
+
+/* Текущая фаза — золотая «пилюля». */
+.phase.is-current .phase__label {
+  padding: 3px 8px;
+  border-radius: var(--radius-pill);
+  background: var(--gold-soft);
+  color: var(--gold-ink);
+  font-weight: 700;
+}
+
+/* «Ход игры»: подсказки по одной строке. */
+.hints {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.hint {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 44px;
+  padding: 0 var(--space-4);
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.hint + .hint {
+  border-top: 1px solid var(--line);
+}
+
+.hint__icon {
+  flex: none;
+  width: 22px;
+  font-size: 16px;
+  text-align: center;
+}
+
+.hint__text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.hint--gold .hint__text {
+  color: var(--gold-ink);
+}
+
+.hint--warn .hint__text {
+  color: var(--warn);
+}
+
+.hint--muted .hint__text {
+  color: var(--hint);
+}
+
+/* Главная подсказка под LIVE-часами на афише. */
+.hero__hint .hint {
+  min-height: 36px;
+  padding: 0 var(--space-3);
+  border: 1px solid rgb(217 174 91 / 0.28);
+  border-radius: var(--radius-sm);
+  background: rgb(0 0 0 / 0.35);
+  font-size: 13.5px;
+}
+
+.hero__hint .hint--muted .hint__text,
+.hero__hint .hint--info .hint__text {
+  color: rgb(255 255 255 / 0.85);
+}
+
+/* BB-анте в таблице блайндов. */
+.table td.is-bb-ante {
+  color: var(--gold);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+/* Ссылка-строка (например, «Правила холдема»). */
+.link-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-height: 60px;
+  padding: var(--space-2) var(--space-4);
+  color: inherit;
+}
+
+.link-row > .icon {
+  flex: none;
+  color: var(--hint);
+}
+
+.link-row__icon {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  background: var(--gold-soft);
+  color: var(--gold-ink);
+}
+
+.link-row__main {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.link-row__title {
+  font-weight: 600;
+}
+
+.link-row__title,
+.link-row__sub {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.link-row__sub {
+  color: var(--hint);
+  font-size: 13px;
+}
+
+a.link-row:active {
+  background: var(--fill);
+}
+
+/* ───────────────────────── Правила холдема ───────────────────────── */
+
+.rules-head {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  margin-bottom: var(--space-4);
+}
+
+.rules-head .eyebrow {
+  color: var(--gold);
+}
+
+.rules-sec summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  min-height: 60px;
+  padding: var(--space-2) var(--space-4);
+  list-style: none;
+  cursor: pointer;
+}
+
+.rules-sec summary::-webkit-details-marker {
+  display: none;
+}
+
+.rules-sec summary > .icon {
+  flex: none;
+  color: var(--hint);
+  transform: rotate(90deg);
+  transition: transform 0.2s var(--ease);
+}
+
+.rules-sec[open] summary > .icon {
+  transform: rotate(-90deg);
+  color: var(--gold);
+}
+
+.rules-sec[open] {
+  border-color: var(--line-gold);
+}
+
+.rules-sec__head {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.rules-sec__title {
+  font-weight: 600;
+}
+
+.rules-sec__sub {
+  overflow: hidden;
+  color: var(--hint);
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rules-sec__body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4) var(--space-4);
+  border-top: 1px solid var(--line);
+}
+
+.rules-text {
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.steps,
+.terms {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.step {
+  display: flex;
+  gap: var(--space-3);
+}
+
+.step__num {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: var(--gold-soft);
+  color: var(--gold-ink);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.step__main {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.step__name {
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.step__text,
+.term__text {
+  color: rgb(245 242 234 / 0.78);
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+.term {
+  display: grid;
+  grid-template-columns: 112px minmax(0, 1fr);
+  align-items: baseline;
+  gap: var(--space-3);
+}
+
+.term__label {
+  overflow: hidden;
+  color: var(--gold-ink);
+  font-size: 13px;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Комбинации: номер · название и пояснение · пять мини-карт. */
+.hands {
+  display: flex;
+  flex-direction: column;
+}
+
+/* Номер · название · карты в первой строке, пояснение — второй строкой во всю ширину. */
+.hand {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr) auto;
+  grid-template-areas:
+    'num name cards'
+    'num note note';
+  align-items: center;
+  column-gap: var(--space-2);
+  row-gap: 2px;
+  padding: 8px 0;
+}
+
+.hand .pcards {
+  grid-area: cards;
+}
+
+.hand + .hand {
+  border-top: 1px solid var(--line);
+}
+
+.hand__num {
+  grid-area: num;
+  align-self: start;
+  padding-top: 8px;
+  width: 18px;
+  color: var(--hint);
+  font-size: 12px;
+  font-weight: 600;
+  text-align: right;
+}
+
+.hand__name,
+.hand__note {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hand__name {
+  grid-area: name;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.hand__note {
+  grid-area: note;
+  color: var(--hint);
+  font-size: 12px;
+}
+
+.hand:first-child .hand__name {
+  color: var(--gold-ink);
+}
+
+.pcards {
+  display: flex;
+  flex: none;
+  gap: 2px;
+}
+
+.pcard {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 30px;
+  border-radius: 4px;
+  background: linear-gradient(180deg, #faf7f0, #e9e3d6);
+  box-shadow: 0 1px 0 rgb(0 0 0 / 0.4), inset 0 0 0 1px rgb(0 0 0 / 0.08);
+  color: #16151a;
+  font-size: 11px;
+  font-weight: 800;
+  line-height: 1;
+  letter-spacing: -0.04em;
+}
+
+.pcard__suit {
+  font-size: 11px;
+}
+
+.pcard--red {
+  color: #c8262c;
+}
+
+/* Формула очков. */
+.formula {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid var(--line-gold);
+  border-radius: var(--radius-sm);
+  background: rgb(217 174 91 / 0.06);
+}
+
+.formula__row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  min-height: 40px;
+  padding: 0 var(--space-3);
+}
+
+.formula__row + .formula__row {
+  border-top: 1px solid var(--line);
+}
+
+.formula__key {
+  flex: none;
+  color: var(--hint);
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.formula__val {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--gold-ink);
+  font-size: 13.5px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.example {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: var(--space-3);
+  border-radius: var(--radius-sm);
+  background: var(--fill);
+}
+
+.example__title {
+  color: var(--gold);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.example__calc {
+  overflow-x: auto;
+  color: var(--text);
+  font-size: 13.5px;
+  font-weight: 600;
+  white-space: pre;
 }
 
 /* ───────────────────────── Доступность и движение ───────────────────────── */

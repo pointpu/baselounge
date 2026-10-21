@@ -3,6 +3,7 @@
  */
 import { config } from '../config.ts';
 import type { TournamentRow } from '../repo.ts';
+import { gameLine } from '../services/formats.ts';
 import { formatDateTime } from '../time.ts';
 
 /** Экранирование для parse_mode=HTML. */
@@ -13,9 +14,9 @@ export function esc(s: string): string {
 const when = (t: TournamentRow): string => formatDateTime(t.starts_at, config.clubTz);
 const buyIn = (t: TournamentRow): string => (t.buy_in > 0 ? `${t.buy_in.toLocaleString('ru-RU')} ₽` : 'бесплатно');
 
-/** Короткая карточка турнира: название, дата, вход. */
+/** Короткая карточка турнира: название, дата, вход, игра и формат («NLH · Bounty · Re-entry»). */
 export function tournamentLine(t: TournamentRow): string {
-  return `<b>${esc(t.title)}</b>\n🗓 ${esc(when(t))} · 💰 ${buyIn(t)}`;
+  return `<b>${esc(t.title)}</b>\n🗓 ${esc(when(t))} · 💰 ${buyIn(t)}\n🃏 ${esc(gameLine(t))}`;
 }
 
 export const texts = {

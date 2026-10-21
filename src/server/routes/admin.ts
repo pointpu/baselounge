@@ -41,6 +41,7 @@ const TournamentInputSchema = z.object({
   title: z.string().trim().min(2, 'Название — минимум 2 символа').max(80),
   subtitle: z.string().trim().max(120).optional(),
   description: z.string().trim().max(4000).optional(),
+  game: z.enum(['nlh', 'plh', 'flh'], { message: 'Игра: nlh, plh или flh' }).optional(),
   startsAt: isoDate,
   lateRegUntil: isoDate.nullable().optional(),
   capacity: z.number().int().min(2, 'Минимум 2 места').max(1000),

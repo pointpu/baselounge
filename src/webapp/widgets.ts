@@ -10,6 +10,8 @@ import type {
   TournamentCard,
   TournamentStatus,
 } from '../shared/types.ts';
+import { FORMAT_LABELS, GAME_LABELS, GAME_SHORT, isBbAnte } from '../shared/rules.ts';
+import type { GameHint, PhaseStep } from '../shared/rules.ts';
 import {
   chip,
   dateBlock,
@@ -98,6 +100,75 @@ export function seatsLabel(card: TournamentCard): string {
   return `Мест нет${card.waitlistCount ? ` · очередь ${card.waitlistCount}` : ''}`;
 }
 
+/* ───────────────────────── Игра и формат ───────────────────────── */
+
+/** «NLH · Bounty · Re-entry · Add-on» — одной строкой для карточек. */
+export function formatLine(card: Pick<TournamentCard, 'game' | 'formats'>): string {
+  return [GAME_SHORT[card.game], ...card.formats.map((f) => FORMAT_LABELS[f])].join(' · ');
+}
+
+/** Теги игры и формата для шапки турнира: одна линия, при нехватке места — листаются вбок. */
+export function formatTags(card: Pick<TournamentCard, 'game' | 'formats'>): HTMLElement {
+  return h(
+    'div',
+    { class: 'tags', attrs: { 'aria-label': `${GAME_LABELS[card.game]}: ${card.formats.map((f) => FORMAT_LABELS[f]).join(', ')}` } },
+    h('span', { class: 'tag tag--game', title: GAME_LABELS[card.game] }, GAME_SHORT[card.game]),
+    card.formats.map((f) => h('span', { class: ['tag', `tag--${f}`] }, FORMAT_LABELS[f])),
+  );
+}
+
+/* ───────────────────────── Ход игры ───────────────────────── */
+
+/** Подсказки «Ход игры»: каждая — одна строка (длинное обрезается многоточием, не переносится). */
+export function hintRows(hints: readonly GameHint[]): HTMLElement[] {
+  return hints.map((hint) =>
+    h(
+      'div',
+      { class: ['hint', `hint--${hint.tone}`] },
+      h('span', { class: 'hint__icon', attrs: { 'aria-hidden': 'true' } }, hint.icon),
+      h('span', { class: 'hint__text', title: hint.text }, hint.text),
+    ),
+  );
+}
+
+/** Лента фаз турнира (Регистрация → Игра → … → Итоги), текущая подсвечена. */
+export function phaseStrip(steps: readonly PhaseStep[]): HTMLElement | null {
+  if (!steps.length) return null;
+  const list = h(
+    'ol',
+    { class: 'phases', attrs: { 'aria-label': 'Фазы турнира' } },
+    steps.map((s) =>
+      h(
+        'li',
+        { class: ['phase', `is-${s.state}`], attrs: { 'aria-current': s.state === 'current' ? 'step' : null } },
+        h('span', { class: 'phase__label' }, s.label),
+      ),
+    ),
+  );
+  // Если лента не влезла — прокручиваем к текущей фазе.
+  requestAnimationFrame(() => {
+    const cur = list.querySelector<HTMLElement>('.is-current');
+    if (cur && list.scrollWidth > list.clientWidth) list.scrollLeft = Math.max(0, cur.offsetLeft - list.clientWidth / 3);
+  });
+  return list;
+}
+
+/** Ссылка на экран «Правила холдема». */
+export function rulesLink(): HTMLElement {
+  return h(
+    'a',
+    { class: 'card link-row', href: '#/rules' },
+    h('span', { class: 'link-row__icon' }, icon('book', 22)),
+    h(
+      'span',
+      { class: 'link-row__main' },
+      h('span', { class: 'link-row__title' }, 'Правила холдема'),
+      h('span', { class: 'link-row__sub' }, 'Комбинации, позиции, рейтинг'),
+    ),
+    icon('chevron', 20),
+  );
+}
+
 /* ───────────────────────── Карточка турнира ───────────────────────── */
 
 /** Карточка турнира в списках; href по умолчанию ведёт на публичную страницу. */
@@ -119,6 +190,7 @@ export function tournamentCard(card: TournamentCard, href = `#/t/${card.id}`): H
       { class: 'tcard__body' },
       h('div', { class: 'tcard__title' }, card.title),
       card.subtitle ? h('div', { class: 'tcard__sub' }, card.subtitle) : null,
+      h('div', { class: 'tcard__meta', title: GAME_LABELS[card.game] }, formatLine(card)),
     ),
     h('span', { class: 'tcard__chevron' }, icon('chevron', 20)),
     // Теги — отдельной строкой во всю ширину карточки, всегда в одну линию.
@@ -195,10 +267,17 @@ function fitOneLine(el: HTMLElement): void {
   }
 }
 
+/** Анте коротко: «анте 400», «BB-анте 400», «без анте». */
+export function anteText(level: BlindLevel, compact = false): string {
+  if (!level.ante) return 'без анте';
+  const n = compact ? compactChips(level.ante) : fmtNum(level.ante);
+  return isBbAnte(level) ? `BB-анте ${n}` : `анте ${n}`;
+}
+
 function nextText(level: BlindLevel | null): string {
   if (!level) return 'Последний уровень';
   if (level.isBreak) return `Далее: перерыв ${level.minutes} мин`;
-  return `Далее: ${blindsText(level)}${level.ante ? ` · анте ${fmtNum(level.ante)}` : ''}`;
+  return `Далее: ${blindsText(level)}${level.ante ? ` · ${isBbAnte(level) ? 'BB-анте' : `анте ${fmtNum(level.ante)}`}` : ''}`;
 }
 
 const RING_R = 54;
@@ -210,6 +289,8 @@ export interface ClockWidget {
   set(clock: ClockState): void;
   /** Перерисовка по локальному времени (вызывать раз в секунду). */
   tick(): void;
+  /** Состояние часов на текущий момент (снимок сервера, «домотанный» локально). */
+  current(): ClockState;
 }
 
 /** LIVE-карточка часов: крупные блайнды, кольцо прогресса уровня, следующий уровень. */
@@ -262,7 +343,7 @@ export function clockWidget(levels: readonly BlindLevel[], initial: ClockState):
     blinds.textContent = c.level.isBreak ? 'Перерыв' : blindsCompact(c.level);
     // Полные числа — в подсказке (для экранных читалок и при наведении).
     blinds.title = c.level.isBreak ? '' : blindsText(c.level);
-    ante.textContent = c.level.isBreak ? `${c.level.minutes} мин` : c.level.ante ? `анте ${compactChips(c.level.ante)}` : 'без анте';
+    ante.textContent = c.level.isBreak ? `${c.level.minutes} мин` : anteText(c.level, true);
     next.textContent = nextText(c.nextLevel);
   };
 
@@ -292,6 +373,7 @@ export function clockWidget(levels: readonly BlindLevel[], initial: ClockState):
       drawAndFit();
     },
     tick: drawAndFit,
+    current: () => projectClock(snapshot, levels, (Date.now() - fetchedAt) / 1000),
   };
 }
 
