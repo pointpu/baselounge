@@ -61,9 +61,29 @@ const TABS: readonly { id: TabId; href: string; label: string; icon: IconName; a
 const screen = h('div', { class: 'screen' });
 const tabbar = h('nav', { class: 'tabbar', ariaLabel: 'Разделы' });
 
+/**
+ * Маршрут из части после `#`. Telegram при открытии Mini App пишет туда свои параметры
+ * (`#tgWebAppData=…`) — либо заменяя наш маршрут, либо дописывая их через `&`/`?`.
+ * Поэтому берём только путь до первого `?`/`&`, а служебный хвост Telegram отбрасываем.
+ */
 function currentPath(): string {
-  const path = window.location.hash.replace(/^#/, '');
+  const raw = window.location.hash.replace(/^#/, '');
+  const path = raw.split(/[?&]/, 1)[0] ?? '';
   return path.startsWith('/') ? path : '/';
+}
+
+/** Допустимый маршрут из ссылки: только наши пути, без внешних адресов и спецсимволов. */
+const SAFE_ROUTE = /^\/[a-z]+(?:\/[a-z0-9]+)*$/;
+
+/**
+ * Маршрут из ссылки бота: `https://…/?route=/t/12`. Query-строку Telegram не трогает
+ * (в отличие от `#`), поэтому ссылки на турнир передают маршрут именно так.
+ */
+function applyRouteParam(): void {
+  const route = new URLSearchParams(window.location.search).get('route');
+  if (!route || !SAFE_ROUTE.test(route) || currentPath() !== '/') return;
+  stack.push('/');
+  window.history.replaceState(null, '', `${window.location.pathname}#${route}`);
 }
 
 function resolve(path: string): { route: Route; params: Params } | null {
@@ -211,6 +231,7 @@ async function boot(): Promise<void> {
   onMeChange(renderTabs);
   document.body.append(tabbar);
   applyStartParam();
+  applyRouteParam();
   window.addEventListener('hashchange', () => void renderRoute());
   void renderRoute();
 }

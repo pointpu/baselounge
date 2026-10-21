@@ -34,7 +34,7 @@ export const publicApi = new Hono<AppEnv>();
 publicApi.get('/tournaments/:id/calendar.ics', async (c) => {
   const { id } = parseInput(IdParam, c.req.param());
   const t = await getVisibleTournament(id, false);
-  const ics = tournamentIcs(t, { url: `${config.webappUrl}/#/t/${t.id}`, location: `${config.clubName}, ${config.clubCity}` });
+  const ics = tournamentIcs(t, { url: `${config.webappUrl}/?route=${encodeURIComponent(`/t/${t.id}`)}`, location: `${config.clubName}, ${config.clubCity}` });
   return c.body(ics, 200, {
     'Content-Type': 'text/calendar; charset=utf-8',
     'Content-Disposition': `attachment; filename="showdown-${t.id}.ics"`,

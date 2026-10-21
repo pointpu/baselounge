@@ -11,7 +11,8 @@ import { texts } from './texts.ts';
 /** Кнопки web_app работают только с https-адресом. */
 export const webAppEnabled = config.webappUrl.startsWith('https://');
 
-export const tournamentUrl = (id: number): string => `${config.webappUrl}/#/t/${id}`;
+/** Ссылка на турнир для кнопок бота: маршрут в query (`?route=`), т.к. `#` Telegram перезаписывает. */
+export const tournamentUrl = (id: number): string => `${config.webappUrl}/?route=${encodeURIComponent(`/t/${id}`)}`;
 
 /** Клавиатура под сообщением о турнире: открыть в Mini App и (опционально) отменить запись. */
 export function tournamentKeyboard(tournamentId: number, opts: { cancel: boolean }): InlineKeyboard | undefined {
