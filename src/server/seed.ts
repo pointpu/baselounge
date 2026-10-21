@@ -16,6 +16,7 @@ import type { BlindLevel, Bullet, ResultEntryInput, TournamentStatus } from '../
 import { config } from './config.ts';
 import { closeDb, db, tx } from './db.ts';
 import { assertSchemaUpToDate } from './migrate.ts';
+import { DEFAULT_REMINDER_OFFSETS } from '../shared/rules.ts';
 import * as repo from './repo.ts';
 import type { PlayerRow } from './repo.ts';
 import { publishResults, seatPlayers } from './services/tournaments.ts';
@@ -110,13 +111,16 @@ async function createDemoTournament(d: DemoTournament): Promise<repo.TournamentR
     reentries: d.reentries,
     addons: d.addons,
     blind_levels: d.levels,
+    reminder_offsets: [...DEFAULT_REMINDER_OFFSETS],
   });
   return (await repo.findTournament(id))!;
 }
 
 /** Записывает игроков (в порядке массива) как участников; напоминания помечены отправленными. */
 async function registerAll(t: repo.TournamentRow, players: readonly PlayerRow[]): Promise<void> {
-  for (const p of players) await repo.upsertRegistration(t.id, p.id, 'registered', { h24: true, h2: true });
+  for (const p of players) await repo.upsertRegistration(t.id, p.id, 'registered');
+  // Демо-игрокам напоминания не шлём.
+  await repo.skipAllReminders(t.id);
 }
 
 /** Удаляет все турниры (каскадом — регистрации и результаты) и демо-игроков. */
@@ -136,6 +140,8 @@ async function createPlayers(): Promise<PlayerRow[]> {
       photoUrl: null,
     });
     await repo.setNickname(row.id, p.nickname);
+    // tg_id демо-игроков ненастоящие: анонсы и напоминания им слать некуда (Telegram ответит 400).
+    await repo.setNotifyPrefs(row.tg_id, { announcements: false, reminders: false });
     rows.push(row);
   }
   return rows;

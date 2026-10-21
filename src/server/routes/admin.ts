@@ -53,10 +53,16 @@ const TournamentInputSchema = z.object({
   reentries: z.array(BulletSchema).max(10).optional(),
   addons: z.array(BulletSchema).max(10).optional(),
   blindLevels: z.array(BlindLevelSchema).max(100).optional(),
+  // Минуты до старта; смысловые правила (> 0, ≤ 7 дней, без повторов, ≤ 5) — reminderOffsetsError в shared/rules.ts.
+  reminderOffsets: z.array(z.number().int()).max(20).optional(),
   status: z.enum(['draft', 'registration']).optional(),
+  announce: z.boolean().optional(),
 });
 
-const StatusBody = z.object({ status: z.enum(['draft', 'registration', 'running', 'completed', 'cancelled']) });
+const StatusBody = z.object({
+  status: z.enum(['draft', 'registration', 'running', 'completed', 'cancelled']),
+  announce: z.boolean().optional(),
+});
 const SeatingBody = z.object({ tableSize: z.number().int().min(2).max(10).optional() });
 const ClockBody = z.object({ action: z.enum(['start', 'pause', 'resume', 'reset']) });
 const ResultsBody = z.object({
@@ -80,19 +86,19 @@ adminApi.get('/tournaments', async (c) => c.json<TournamentCard[]>(await listAll
 adminApi.post('/tournaments', async (c) => {
   const input = parseInput(TournamentInputSchema, await jsonBody(c));
   const t = await createTournament(input);
-  return c.json<TournamentDetail>(await buildDetail(t, c.get('player')), 201);
+  return c.json<TournamentDetail>(await buildDetail(t, c.get('player'), true), 201);
 });
 
 adminApi.patch('/tournaments/:id', async (c) => {
   const { id } = parseInput(IdParam, c.req.param());
   const patch = parseInput(TournamentInputSchema.partial(), await jsonBody(c));
-  return c.json<TournamentDetail>(await buildDetail(await updateTournament(id, patch), c.get('player')));
+  return c.json<TournamentDetail>(await buildDetail(await updateTournament(id, patch), c.get('player'), true));
 });
 
 adminApi.post('/tournaments/:id/status', async (c) => {
   const { id } = parseInput(IdParam, c.req.param());
-  const { status } = parseInput(StatusBody, await jsonBody(c));
-  return c.json<TournamentDetail>(await buildDetail(await changeStatus(id, status), c.get('player')));
+  const { status, announce } = parseInput(StatusBody, await jsonBody(c));
+  return c.json<TournamentDetail>(await buildDetail(await changeStatus(id, status, { announce }), c.get('player'), true));
 });
 
 adminApi.get('/tournaments/:id/registrations', async (c) => {
@@ -103,17 +109,17 @@ adminApi.get('/tournaments/:id/registrations', async (c) => {
 adminApi.post('/tournaments/:id/seating', async (c) => {
   const { id } = parseInput(IdParam, c.req.param());
   const { tableSize } = parseInput(SeatingBody, await jsonBody(c));
-  return c.json<TournamentDetail>(await buildDetail(await seatPlayers(id, tableSize), c.get('player')));
+  return c.json<TournamentDetail>(await buildDetail(await seatPlayers(id, tableSize), c.get('player'), true));
 });
 
 adminApi.post('/tournaments/:id/clock', async (c) => {
   const { id } = parseInput(IdParam, c.req.param());
   const { action } = parseInput(ClockBody, await jsonBody(c));
-  return c.json<TournamentDetail>(await buildDetail(await controlClock(id, action), c.get('player')));
+  return c.json<TournamentDetail>(await buildDetail(await controlClock(id, action), c.get('player'), true));
 });
 
 adminApi.put('/tournaments/:id/results', async (c) => {
   const { id } = parseInput(IdParam, c.req.param());
   const { entries } = parseInput(ResultsBody, await jsonBody(c));
-  return c.json<TournamentDetail>(await buildDetail(await publishResults(id, entries), c.get('player')));
+  return c.json<TournamentDetail>(await buildDetail(await publishResults(id, entries), c.get('player'), true));
 });

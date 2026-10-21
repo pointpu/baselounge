@@ -103,6 +103,18 @@ export interface TournamentDetail extends TournamentCard {
   participants: PlayerBrief[];
   waitlist: PlayerBrief[];
   results: ResultRow[] | null;
+  /** Напоминания: за сколько минут до старта (по убыванию: 1440, 120…). */
+  reminderOffsets: number[];
+  /** Когда разослан анонс турнира (только для админов; остальным — null). */
+  announcedAt: string | null;
+}
+
+/** Подписки игрока на необязательные сообщения бота. */
+export interface NotifyPrefs {
+  /** Анонсы новых турниров клуба. */
+  announcements: boolean;
+  /** Напоминания о турнирах, на которые записан. */
+  reminders: boolean;
 }
 
 export interface Me {
@@ -116,6 +128,16 @@ export interface Me {
   };
   isAdmin: boolean;
   club: { name: string; city: string; tz: string };
+  /** Подписки на уведомления. Рассадка, итоги и отмена турнира приходят всегда. */
+  notify: NotifyPrefs;
+}
+
+/** PATCH /api/me: любое подмножество полей. */
+export interface MePatch {
+  /** null или пустая строка — сбросить на имя из Telegram. */
+  nickname?: string | null;
+  notifyAnnouncements?: boolean;
+  notifyReminders?: boolean;
 }
 
 export interface LeaderboardRow {
@@ -173,7 +195,18 @@ export interface TournamentInput {
   reentries?: Bullet[];
   addons?: Bullet[];
   blindLevels?: BlindLevel[];
+  /** Напоминания, минуты до старта (> 0, ≤ 7 дней, без повторов, не больше 5). По умолчанию [1440, 120]. */
+  reminderOffsets?: number[];
   status?: 'draft' | 'registration';
+  /** Разослать анонс, если турнир открывает регистрацию (по умолчанию true). В базе не хранится. */
+  announce?: boolean;
+}
+
+/** POST /api/admin/tournaments/:id/status. */
+export interface StatusChangeInput {
+  status: TournamentStatus;
+  /** Для draft → registration: разослать анонс (по умолчанию true). */
+  announce?: boolean;
 }
 
 export interface AdminRegistration {

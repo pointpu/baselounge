@@ -8,6 +8,7 @@ import type {
   Leaderboard,
   LeaderboardPeriod,
   Me,
+  MePatch,
   PlayerStats,
   ResultEntryInput,
   TournamentCard,
@@ -110,7 +111,7 @@ const get = <T>(path: string): Promise<T> => request<T>('GET', path);
 /** Типизированные методы API (см. DESIGN.md → REST API). */
 export const api = {
   me: () => get<Me>('/api/me'),
-  updateMe: (nickname: string) => request<Me>('PATCH', '/api/me', { nickname }),
+  updateMe: (patch: MePatch) => request<Me>('PATCH', '/api/me', patch),
   uploadAvatar(file: File): Promise<Me> {
     const form = new FormData();
     form.append('file', file);
@@ -131,8 +132,8 @@ export const api = {
     create: (input: TournamentInput) => request<TournamentDetail>('POST', '/api/admin/tournaments', input),
     update: (id: number, patch: Partial<TournamentInput>) =>
       request<TournamentDetail>('PATCH', `/api/admin/tournaments/${id}`, patch),
-    setStatus: (id: number, status: TournamentStatus) =>
-      request<TournamentDetail>('POST', `/api/admin/tournaments/${id}/status`, { status }),
+    setStatus: (id: number, status: TournamentStatus, opts: { announce?: boolean } = {}) =>
+      request<TournamentDetail>('POST', `/api/admin/tournaments/${id}/status`, { status, ...opts }),
     registrations: (id: number) => get<AdminRegistration[]>(`/api/admin/tournaments/${id}/registrations`),
     seating: (id: number, tableSize: number) =>
       request<TournamentDetail>('POST', `/api/admin/tournaments/${id}/seating`, { tableSize }),

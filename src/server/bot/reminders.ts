@@ -1,34 +1,54 @@
 /**
- * Напоминания о турнире за 24 ч и за 2 ч. Раз в минуту «забираем» записи, у которых старт
- * попал в окно, а напоминание ещё не отправлено. Флаг ставится тем же UPDATE … RETURNING,
- * что и выборка (`repo.claimDueReminders`), — до отправки: лучше пропустить напоминание
- * при сбое, чем прислать его дважды (в том числе если запущено несколько процессов).
+ * Напоминания о турнире по настраиваемым сдвигам (`tournaments.reminder_offsets`, минуты до старта;
+ * по умолчанию за 1 день и за 2 ч). Раз в минуту «забираем» созревшие напоминания одним
+ * `INSERT … ON CONFLICT DO NOTHING RETURNING` в reminder_deliveries (`repo.claimDueReminders`) —
+ * до отправки: лучше пропустить напоминание при сбое, чем прислать его дважды (в том числе
+ * при нескольких процессах и перезапусках).
+ *
+ * - Окно открылось больше `REMINDER_GRACE_MIN` минут назад (сервер был выключен, старт перенесли
+ *   вплотную) — напоминание отмечается пропущенным и не отправляется.
+ * - Частоту отправки ограничивает TelegramNotifier (общий лимит бота).
+ * - Игроки, отключившие напоминания в профиле или заблокировавшие бота, не выбираются.
+ * - При переносе старта отметки турнира сбрасываются (services/tournaments.ts → repo.resetReminders).
  */
 import * as repo from '../repo.ts';
 import type { TournamentRow } from '../repo.ts';
-import { notifyLater } from '../services/notifier.ts';
-import { addMs, HOUR_MS, nowIso } from '../time.ts';
+import { REMINDER_GRACE_MIN } from '../../shared/rules.ts';
+import { getNotifier } from '../services/notifier.ts';
+import { nowIso } from '../time.ts';
 
 const INTERVAL_MS = 60_000;
 
-/** Один проход: отправить всё, что пора. Возвращает число отправленных напоминаний. */
-export async function sendDueReminders(now: Date = new Date()): Promise<number> {
-  const nowStr = nowIso(now);
-  const in2h = addMs(nowStr, 2 * HOUR_MS);
-  const in24h = addMs(nowStr, 24 * HOUR_MS);
-  // Сначала 2-часовые: они же гасят суточное, если оно не успело уйти.
-  const due = [
-    ...(await repo.claimDueReminders('2h', nowStr, in2h, in24h)).map((c) => ({ ...c, hours: 2 })),
-    ...(await repo.claimDueReminders('24h', nowStr, in2h, in24h)).map((c) => ({ ...c, hours: 24 })),
-  ];
+export interface ReminderPass {
+  sent: number;
+  /** Не доставлено: бот заблокирован (403) или другая ошибка Telegram. */
+  failed: number;
+  skipped: number;
+}
 
+/** Один проход: забрать и отправить всё, что пора. */
+export async function sendDueReminders(now: Date = new Date()): Promise<ReminderPass> {
+  const claimed = await repo.claimDueReminders(nowIso(now), REMINDER_GRACE_MIN);
+  const pass: ReminderPass = { sent: 0, failed: 0, skipped: 0 };
   const tournaments = new Map<number, TournamentRow | undefined>();
-  for (const d of due) {
-    if (!tournaments.has(d.tournament_id)) tournaments.set(d.tournament_id, await repo.findTournament(d.tournament_id));
-    const t = tournaments.get(d.tournament_id);
-    if (t) notifyLater((n) => n.reminder(d.tg_id, t, d.hours));
+  for (const c of claimed) {
+    if (c.skipped) {
+      pass.skipped += 1;
+      continue;
+    }
+    if (!tournaments.has(c.tournament_id)) tournaments.set(c.tournament_id, await repo.findTournament(c.tournament_id));
+    const t = tournaments.get(c.tournament_id);
+    if (!t) continue;
+    try {
+      const outcome = await getNotifier().reminder(c.tg_id, t, c.offset_min);
+      if (outcome === 'sent') pass.sent += 1;
+      else pass.failed += 1;
+    } catch (err) {
+      pass.failed += 1;
+      console.error('[reminders] ошибка отправки', c.tg_id, err);
+    }
   }
-  return due.length;
+  return pass;
 }
 
 /** Запускает цикл напоминаний; возвращает функцию остановки. Проходы не накладываются друг на друга. */
@@ -38,8 +58,10 @@ export function startReminders(): () => void {
     if (running) return;
     running = true;
     try {
-      const n = await sendDueReminders();
-      if (n > 0) console.log(`[reminders] отправлено напоминаний: ${n}`);
+      const { sent, failed, skipped } = await sendDueReminders();
+      if (sent > 0 || failed > 0 || skipped > 0) {
+        console.log(`[reminders] отправлено: ${sent}, не доставлено: ${failed}, пропущено устаревших: ${skipped}`);
+      }
     } catch (err) {
       console.error('[reminders]', err);
     } finally {

@@ -10,7 +10,10 @@ Telegram-бот и Mini App для покерного клуба: афиша т�
 - **Афиша и запись**: карточки турниров, запись одной кнопкой (нативная MainButton Telegram),
   deep link `https://t.me/<бот>?start=t_<id>`.
 - **Лист ожидания**: при отмене первый в очереди получает место и сообщение от бота.
-- **Напоминания** за 24 ч и за 2 ч, файл `.ics` «Добавить в календарь».
+- **Напоминания** перед стартом — набор на каждый турнир (по умолчанию за 1 день и за 2 ч), файл `.ics` «Добавить в календарь».
+- **Анонсы**: открыли регистрацию — бот пишет подписанным игрокам; в профиле можно отключить анонсы и напоминания.
+- **Проверки времени**: запись закрывается на старте (или в конце поздней регистрации), старт турнира —
+  не раньше чем за 1 ч, рассадка — за 3 ч, итоги — после старта.
 - **Живые часы блайндов**: текущий и следующий уровень, обратный отсчёт — у всех в телефоне.
 - **Техасский холдем**: игра турнира (No-Limit / Pot-Limit / Fixed-Limit Hold'em), форматы выводятся
   автоматически (Bounty, Re-entry/Freezeout, Turbo, Deepstack, Add-on), подсказки «Ход игры» (перерыв и add-on,
@@ -253,7 +256,7 @@ docker-compose.yml      # локальный PostgreSQL 17
 
 | Метод | Путь | Что делает |
 |---|---|---|
-| GET / PATCH | `/api/me` | профиль; смена никнейма `{ nickname }` |
+| GET / PATCH | `/api/me` | профиль; `{ nickname?, notifyAnnouncements?, notifyReminders? }` |
 | POST | `/api/me/avatar` | загрузка аватара (multipart `file`, JPEG/PNG/WebP ≤ 2 МБ) |
 | GET | `/api/me/stats`, `/api/players/:id` | статистика, история, ачивки |
 | GET | `/api/tournaments?scope=upcoming\|past` | список турниров |
@@ -263,7 +266,7 @@ docker-compose.yml      # локальный PostgreSQL 17
 | GET | `/api/leaderboard?period=season\|all` | рейтинг месяца / за всё время |
 | GET / POST | `/api/admin/tournaments` | все турниры / создать |
 | PATCH | `/api/admin/tournaments/:id` | изменить |
-| POST | `/api/admin/tournaments/:id/status` | `{ status }`: открыть регистрацию, старт, отмена |
+| POST | `/api/admin/tournaments/:id/status` | `{ status, announce? }`: открыть регистрацию (+ анонс), старт, отмена |
 | GET | `/api/admin/tournaments/:id/registrations` | записи с телефонами и местами |
 | POST | `/api/admin/tournaments/:id/seating` | авторассадка `{ tableSize: 6..10 }` |
 | POST | `/api/admin/tournaments/:id/clock` | часы `{ action: start\|pause\|resume\|reset }` |

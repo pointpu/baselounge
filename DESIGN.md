@@ -30,7 +30,8 @@ parameter properties**; относительные импорты с расши�
    следующий уровень и обратный отсчёт (сервер считает состояние, клиент тикает локально).
 2. **Лист ожидания** — при заполнении можно встать в очередь; при отмене первый в очереди
    автоматически получает место и сообщение от бота.
-3. **Напоминания** — бот напоминает за 24 ч и за 2 ч; кнопка «Добавить в календарь» (.ics).
+3. **Напоминания** — бот напоминает перед стартом (у каждого турнира свой набор: по умолчанию за 1 день и за 2 ч); кнопка «Добавить в календарь» (.ics).
+   **Анонсы** — когда турнир открывает регистрацию, бот сообщает о нём подписанным игрокам (подписки — в профиле).
 4. **Авторассадка** — одна кнопка у админа: сбалансированная случайная рассадка по столам,
    каждому игроку приходит «стол 2 · место 5».
 5. **Автоматические ачивки** — считаются из результатов, без работы админа.
@@ -159,8 +160,16 @@ tournaments(id integer identity PK, title text, subtitle text DEFAULT '', descri
 registrations(id identity PK, tournament_id FK → tournaments ON DELETE CASCADE, player_id FK → players ON DELETE CASCADE,
         status text in (registered,waitlist,cancelled), created_at timestamptz, updated_at timestamptz,
         table_no integer NULL, seat_no integer NULL,
-        reminded_24h boolean DEFAULT false, reminded_2h boolean DEFAULT false, UNIQUE(tournament_id, player_id))
+        UNIQUE(tournament_id, player_id))
   INDEX (tournament_id, status, updated_at, id), INDEX (player_id)
+
+-- migration 004 (004_notifications.sql):
+tournaments + reminder_offsets integer[] DEFAULT '{1440,120}' (минуты до старта; ≤ 5 шт., 1..10080),
+              announced_at timestamptz NULL (анонс разослан — один раз за жизнь турнира)
+players     + notify_announcements boolean DEFAULT true, notify_reminders boolean DEFAULT true,
+              bot_blocked_at timestamptz NULL (Telegram 403 — не пишем до следующего /start)
+reminder_deliveries(registration_id FK → registrations ON DELETE CASCADE, offset_min integer, skipped boolean,
+        sent_at timestamptz, PRIMARY KEY(registration_id, offset_min))   -- флаги reminded_24h/2h перенесены сюда и удалены
 
 results(id identity PK, tournament_id FK CASCADE, player_id FK CASCADE, place integer CHECK > 0,
         knockouts integer DEFAULT 0, points integer,
@@ -182,17 +191,34 @@ results(id identity PK, tournament_id FK CASCADE, player_id FK CASCADE, place in
   Так запросы по одному турниру идут строго по очереди: вместимость не превышается, повышение из листа
   ожидания — FIFO.
 - Игрок — `INSERT … ON CONFLICT (tg_id) DO UPDATE` (nickname не трогается).
-- Напоминания «забираются» атомарно: `UPDATE registrations SET reminded_… = true WHERE … AND NOT reminded_… RETURNING …`
-  — одно напоминание не уйдёт дважды даже при двух процессах.
+- Напоминания «забираются» атомарно: `INSERT INTO reminder_deliveries … ON CONFLICT DO NOTHING RETURNING …`
+  (`repo.claimDueReminders`) — одно напоминание не уйдёт дважды даже при двух процессах и перезапусках.
+- Анонс «забирается» так же: `UPDATE tournaments SET announced_at = now() WHERE id = $1 AND announced_at IS NULL … RETURNING`.
 - Перенос со старой SQLite-базы — `npm run import:sqlite` (`import-sqlite.ts`): одна транзакция, id сохраняются
   (`OVERRIDING SYSTEM VALUE`), затем identity-последовательности сдвигаются; непустые таблицы — только с `--force`.
 
 Бизнес-правила:
-- Регистрация открыта, если `status = registration`, или `running` и `now < late_reg_until`.
+- Время (сервер — источник правды, те же функции из `shared/rules.ts` проверяет форма админки; 409 — конфликт
+  состояния/времени, 400 — некорректный ввод; тексты — по-русски, время — в CLUB_TZ):
+  - Регистрация открыта, если (`status = registration` и `now < starts_at`) или (`status ∈ {registration, running}`
+    и `late_reg_until` задан и `now < late_reg_until`) — `registrationOpen`. Так же считается `canRegister`, запись
+    через API и deep link бота.
+  - Лист ожидания повышается только пока запись открыта: после старта — лишь во время поздней регистрации,
+    затем очередь «замораживается» (выйти из неё можно).
+  - registration → running и запуск часов — не раньше чем за `EARLY_START_MIN` = 60 мин до старта
+    («Рано: турнир начинается в 19:00 — запустить можно с 18:00»). Досрочный запуск = старт: без поздней
+    регистрации запись закрывается, а отменить занятое место уже нельзя (`hasStarted`), даже если `starts_at` впереди.
+  - Рассадка — есть участники, статус registration|running и не раньше чем за `EARLY_SEATING_MIN` = 180 мин до старта.
+  - Результаты — статус running (или completed — исправление) и `now ≥ starts_at`. Места уникальны 1..n, каждый —
+    зарегистрированный участник; вносить можно не всех (не пришедшие — без места), размер поля для очков и
+    сообщения (`fieldSize`) — n.
+  - Стартовый стек > BB первого игрового уровня (если оба заданы), стеки ре-энтри/add-on > 0 (`stackError`, 400).
+  - Capacity нельзя опустить ниже числа записанных (`capacityError`, 409).
+  - Напоминания: каждое > 0 и ≤ 7 дней, без повторов, не больше 5 (`reminderOffsetsError`, 400); «прошедшие»
+    сдвиги не отклоняются — они просто не отправляются.
 - register: уже registered/waitlist → идемпотентно. Если registered < capacity → registered, иначе waitlist.
   Повторная регистрация после отмены переиспользует строку.
 - cancel: до завершения; если отменяет `registered` и есть очередь → повысить первого, событие `waitlistPromoted`. Место за столом сбрасывается.
-- Уменьшение capacity никого не выкидывает.
 - Каждое изменение — в одной транзакции `tx()` с блокировкой строки турнира (`FOR UPDATE`); уведомления — после коммита.
 
 ## Чистые функции
@@ -235,16 +261,17 @@ interface TournamentCard { id; title; subtitle; game: GameType; formats: FormatT
 interface ResultRow { place: number; player: PlayerBrief; knockouts: number; points: number }
 interface TournamentDetail extends TournamentCard { description; knockoutPoints; reentries: Bullet[]; addons: Bullet[];
   blindLevels: BlindLevel[]; clock: ClockState | null; participants: PlayerBrief[]; waitlist: PlayerBrief[];
-  results: ResultRow[] | null }
+  results: ResultRow[] | null; reminderOffsets: number[]; announcedAt: string | null /* только админам */ }
 interface Me { player: { id; tgId; name; nickname: string | null; avatarUrl; phoneVerified: boolean };
-  isAdmin: boolean; club: { name; city; tz } }
+  isAdmin: boolean; club: { name; city; tz }; notify: { announcements: boolean; reminders: boolean } }
 interface LeaderboardRow { place; player: PlayerBrief; points; events; wins }
 interface Leaderboard { period: 'season' | 'all'; seasonLabel: string; rows: LeaderboardRow[] }
 interface PlayerStats { player: PlayerBrief; placeAll: number | null;
   stats: { points; seasonPoints; events; wins; finalTables; knockouts; bestPlace: number | null };
   history: { tournamentId; title; startsAt; place; points; knockouts }[] }
 interface TournamentInput { title; subtitle?; description?; startsAt; lateRegUntil?: string | null; capacity; buyIn;
-  startingStack?: number | null; knockoutPoints?; reentries?; addons?; blindLevels?; status?: 'draft' | 'registration' }
+  startingStack?: number | null; knockoutPoints?; reentries?; addons?; blindLevels?; reminderOffsets?: number[];
+  status?: 'draft' | 'registration'; announce?: boolean /* по умолчанию true */ }
 interface AdminRegistration { player: PlayerBrief; status; createdAt; table: number | null; seat: number | null;
   phone: string | null; phoneVerified: boolean; username: string | null }
 interface ApiError { error: string }
@@ -252,7 +279,8 @@ interface ApiError { error: string }
 
 Публичные (с авторизацией):
 - `GET  /api/me` → `Me`
-- `PATCH /api/me` `{ nickname }` (trim, 2..32, без управляющих символов) → `Me`
+- `PATCH /api/me` `{ nickname?, notifyAnnouncements?, notifyReminders? }` (nickname: trim, 2..32, без управляющих
+  символов; меняются только переданные поля) → `Me`
 - `POST /api/me/avatar` multipart `file` (jpeg/png/webp по сигнатуре байт, ≤ 2 МБ, upsert в таблицу avatars, version + 1) → `Me`
 - `GET  /api/tournaments?scope=upcoming|past` → `TournamentCard[]` (upcoming: registration/running по возрастанию даты, админам ещё draft; past: completed/cancelled по убыванию)
 - `GET  /api/tournaments/:id` → `TournamentDetail` (draft → 404 для не-админа)
@@ -266,7 +294,7 @@ interface ApiError { error: string }
 - `GET    /api/admin/tournaments` → `TournamentCard[]` (все статусы)
 - `POST   /api/admin/tournaments` `TournamentInput` → `TournamentDetail`
 - `PATCH  /api/admin/tournaments/:id` `Partial<TournamentInput>` → `TournamentDetail`
-- `POST   /api/admin/tournaments/:id/status` `{ status }`: draft→registration, registration→running, registration|running→cancelled (уведомить), running→completed только через результаты
+- `POST   /api/admin/tournaments/:id/status` `{ status, announce? }`: draft→registration (+ анонс, если announce ≠ false), registration→running, registration|running→cancelled (уведомить), running→completed только через результаты
 - `GET    /api/admin/tournaments/:id/registrations` → `AdminRegistration[]`
 - `POST   /api/admin/tournaments/:id/seating` `{ tableSize: 6..10 }` → `TournamentDetail` + уведомления
 - `POST   /api/admin/tournaments/:id/clock` `{ action: 'start'|'pause'|'resume'|'reset' }` → `TournamentDetail`
@@ -285,11 +313,25 @@ interface Notifier {
   registered(tgId: number, t: TournamentRow, waitlistPosition: number | null): Promise<void>;
   waitlistPromoted(tgId: number, t: TournamentRow): Promise<void>;
   seatAssigned(tgId: number, t: TournamentRow, table: number, seat: number): Promise<void>;
-  resultsPublished(tgId: number, t: TournamentRow, place: number, points: number): Promise<void>;
+  resultsPublished(tgId: number, t: TournamentRow, place: number, points: number, fieldSize: number): Promise<void>;
   tournamentCancelled(tgId: number, t: TournamentRow): Promise<void>;
-  reminder(tgId: number, t: TournamentRow, hours: number): Promise<void>;
+  reminder(tgId: number, t: TournamentRow, minutesBefore: number): Promise<'sent' | 'blocked' | 'failed'>;
+  announce(tgId: number, t: TournamentRow): Promise<'sent' | 'blocked' | 'failed'>;
 }
 ```
+TelegramNotifier на 403 («bot was blocked by the user», «user is deactivated», «can't initiate conversation»)
+и на `my_chat_member` → `kicked` вызывает `repo.markBotBlocked`; `/start`, другие обращения к боту и
+`my_chat_member` → `member` снимают отметку (`repo.clearBotBlocked`). Все сообщения бота идут через один
+лимит процесса (≤ 25/с); на 429 лимит ставится на паузу на `retry_after` (≤ 60 с), сообщение повторяется до 2 раз. Подписки (`notify_*`) отключают только
+анонсы и напоминания — рассадка, итоги и отмена турнира приходят всегда.
+
+**Анонсы** (`services/announcements.ts`): турнир становится `registration` (создание сразу с регистрацией,
+draft → registration через статус или PATCH) и старт впереди → в той же транзакции `claimAnnouncement`, после
+коммита — фоновая рассылка: получатели `notify_announcements AND bot_blocked_at IS NULL`, последовательно,
+(частоту держит общий лимит TelegramNotifier), очередь в процессе (после перезапуска недосланное не продолжается), ошибки не прерывают;
+в лог — `[announce] t=ID sent=N blocked=M failed=K`. Флаг `announce: false` в теле — без рассылки.
+Без бота (`NullNotifier`) анонс не «забирается»: `announced_at` остаётся пустым, в лог — предупреждение.
+Кнопка анонса «✍️ Записаться» — deep link `t.me/<bot>?start=t_<id>` (запись в один тап), рядом — «Открыть турнир».
 `NullNotifier` — когда нет BOT_TOKEN. Уведомления отправляются **после** коммита, fire-and-forget
 (`void notify().catch(log)`); TelegramNotifier логирует и глотает ошибки (бот заблокирован и т.п.).
 Регистрация через Mini App тоже шлёт сообщение «Вы записаны…» (как у River).
@@ -299,12 +341,19 @@ interface Notifier {
 - `/start` → приветствие + inline-кнопка WebApp «Открыть клуб» (WEBAPP_URL); upsert игрока.
 - `/start t_<id>` (deep link) → запись через services, ответ с карточкой турнира +
   кнопки [Открыть турнир (WebApp `WEBAPP_URL#/t/<id>`)] [Отменить запись (callback `cancel:<id>`)].
-- callback `cancel:<id>` → отмена через services, редактирование сообщения.
+- callback `cancel:<id>` → кнопки подтверждения «Да, отменить» (`cancel:<id>:y`) / «Нет, остаюсь» (`cancel:<id>:n`);
+  `:y` → отмена через services, редактирование сообщения.
+- `/notify` → настройки с кнопками `notify:<key>:<0|1>` (целевое значение в callback); `/notify off|on` — только анонсы.
 - `message:contact` → только если `contact.user_id === from.id`: сохранить телефон, phone_verified=1,
   ответ «Телефон подтверждён ✓» с `remove_keyboard`.
 - `/help`. При старте: `setMyCommands`, `setChatMenuButton({ menu_button: { type: 'web_app', text: 'Клуб', web_app: { url } } })`.
-- Напоминания: раз в 60 с — регистрации `registered` для турниров `registration|running`, старт в пределах 24 ч
-  (не reminded_24h) / 2 ч (не reminded_2h) → отправить, выставить флаг.
+- Напоминания (`bot/reminders.ts`): раз в 60 с — для записей `registered` на турниры `registration`
+  (запущенному досрочно турниру напоминания «через 25 минут» уже не шлются)
+  (игрок с `notify_reminders` и без `bot_blocked_at`) и каждого сдвига из `reminder_offsets`, у которого
+  `now ≥ starts_at − offset` и `now < starts_at`, вставляется строка reminder_deliveries и вызывается
+  `notifier.reminder(tgId, t, offset)`. Окно открылось больше 30 мин назад (простой) — отмечается `skipped` без
+  отправки; из нескольких созревших сразу уходит только самое позднее. Запись незадолго до старта сразу
+  отмечает уже открытые окна. Перенос старта удаляет отметки турнира — напоминания придут к новому времени.
 
 ## UX Mini App
 
@@ -324,9 +373,14 @@ interface Notifier {
   сворачиваемые разделы. Ссылки — с афиши, профиля и экрана турнира.
 - Рейтинг: сегмент Месяц/Всё время, пьедестал топ-3, поиск, строки → профиль игрока.
 - Профиль: аватар (тап — сменить), никнейм (bottom sheet), подтверждение телефона (`requestContact`), плитки статистики, ачивки, история.
+  Раздел «Уведомления»: переключатели (role=switch) «Анонсы турниров» и «Напоминания» — оптимистично, с откатом при ошибке;
+  подпись: рассадка, итоги и отмена приходят всегда.
 - Админ: список со статусами + «Новый турнир»; форма (все поля, включая игру No-Limit / Pot-Limit / Fixed-Limit; редактор уровней
   блайндов с пресетами «Турбо / Стандарт / BB-анте» — последний ставит анте = BB с выбранного уровня текущей структуры);
   действия: открыть регистрацию, старт, отмена, рассадка, часы, ввод результатов (список зарегистрированных: место + нокауты).
+  В форме — «Напоминания»: чипы-пресеты (за 1 день / 3 ч / 2 ч / 1 ч / 30 мин / 15 мин, множественный выбор, одна строка с
+  прокруткой) + «Своё…» (минуты или часы); галочка «Отправить анонс игрокам» при открытии регистрации (и у черновика).
+  Время действий проверяется теми же правилами до запроса (toast с причиной), под кнопками — «доступно с …»; статус анонса.
 - Состояния: скелетоны, понятные пустые состояния, ошибки, toast, haptics.
 - Разработка в браузере: без initData — параметр `?dev_user=<id>` (сохранять в sessionStorage) → заголовок `X-Dev-User`.
 - **Никакого innerHTML с данными** — DOM строится через `h()` / `textContent`.

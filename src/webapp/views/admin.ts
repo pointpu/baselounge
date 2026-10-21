@@ -40,15 +40,30 @@ import {
 import type { Cleanup, Params } from '../ui.ts';
 import { clubTz } from '../state.ts';
 import {
+  DEFAULT_REMINDER_OFFSETS,
+  EARLY_SEATING_MIN,
+  EARLY_START_MIN,
   GAME_LABELS,
   MAX_DAYS_AHEAD,
+  MAX_REMINDER_MIN,
+  MAX_REMINDERS,
+  REMINDER_PRESETS,
   START_GRACE_MIN,
+  capacityError,
+  earlySeatingError,
+  earlyStartError,
   lateRegOptions,
   levelsError,
+  reminderLabel,
+  reminderOffsetsError,
+  resultsTimeError,
   sameLevels,
   sameMinute,
   scheduleError,
+  sortOffsets,
+  stackError,
 } from '../../shared/rules.ts';
+import type { TimeFormat } from '../../shared/rules.ts';
 import { avatar, blindsText, clockWidget, statusBadge, tournamentCard } from '../widgets.ts';
 import type { ClockWidget } from '../widgets.ts';
 
@@ -735,6 +750,123 @@ function lateRegPicker(initialIso: string | null, initialStartIso: string | null
   return { el: field('Поздняя регистрация', h('div', { class: 'stack stack--sm' }, select, customRow, hint)), value, refresh };
 }
 
+/* ───────────────────────── Напоминания ───────────────────────── */
+
+interface RemindersPicker {
+  el: HTMLElement;
+  /** Минуты до старта (по убыванию) или текст ошибки. */
+  value(): number[] | string;
+}
+
+/**
+ * Напоминания игрокам: пресеты-чипы с множественным выбором (одна строка, горизонтальная
+ * прокрутка — без переносов) + «Своё…» (минуты или часы). Выбранные нестандартные значения
+ * показываются отдельными чипами, тап — убрать.
+ */
+function remindersPicker(initial: readonly number[]): RemindersPicker {
+  const selected = new Set<number>(initial);
+  const row = h('div', { class: 'pick-row', attrs: { role: 'group', 'aria-label': 'Когда напомнить' } });
+  const summary = h('p', { class: 'field__hint' });
+  const amount = numInput(null, { min: 1, placeholder: 'Сколько' });
+  amount.ariaLabel = 'Своё напоминание: сколько';
+  const unit = h(
+    'select',
+    { class: 'input select', ariaLabel: 'Единицы' },
+    h('option', { value: '60' }, 'ч'),
+    h('option', { value: '1' }, 'мин'),
+  );
+  const addButton = h('button', { type: 'button', class: 'btn btn--soft btn--sm' }, 'Добавить');
+  const customRow = h('div', { class: 'remind-custom', hidden: true }, amount, unit, addButton);
+  const error = errorLine();
+  let customOpen = false;
+
+  const toggle = (minutes: number): void => {
+    if (selected.has(minutes)) selected.delete(minutes);
+    else if (selected.size >= MAX_REMINDERS) return void showError(error, `Напоминаний — не больше ${MAX_REMINDERS}`);
+    else selected.add(minutes);
+    showError(error, null);
+    haptic.select();
+    render();
+  };
+
+  const chip = (label: string, active: boolean, onClick: () => void, extra?: HTMLElement): HTMLButtonElement =>
+    h('button', { type: 'button', class: ['pick', active && 'is-active'], attrs: { 'aria-pressed': active }, on: { click: onClick } }, label, extra ?? null);
+
+  const render = (): void => {
+    const presetSet = new Set(REMINDER_PRESETS.map((p) => p.minutes));
+    const custom = sortOffsets([...selected].filter((m) => !presetSet.has(m)));
+    setChildren(
+      row,
+      ...REMINDER_PRESETS.map((p) => chip(p.label, selected.has(p.minutes), () => toggle(p.minutes))),
+      ...custom.map((m) => chip(reminderLabel(m), true, () => toggle(m), h('span', { class: 'pick__x', attrs: { 'aria-hidden': 'true' } }, '×'))),
+      chip('Своё…', customOpen, () => {
+        customOpen = !customOpen;
+        customRow.hidden = !customOpen;
+        render();
+        if (customOpen) amount.focus();
+      }),
+    );
+    const list = sortOffsets([...selected]);
+    summary.textContent = list.length ? `Бот напомнит ${list.map(reminderLabel).join(', ')} до старта` : 'Без напоминаний';
+  };
+
+  addButton.addEventListener('click', () => {
+    const n = intOf(amount);
+    const minutes = n === null ? null : n * Number(unit.value);
+    if (minutes === null || minutes <= 0) return void showError(error, 'Укажите, за сколько напомнить');
+    if (minutes > MAX_REMINDER_MIN) return void showError(error, 'Напоминание — не раньше чем за 7 дней до старта');
+    if (selected.has(minutes)) return void showError(error, 'Такое напоминание уже есть');
+    if (selected.size >= MAX_REMINDERS) return void showError(error, `Напоминаний — не больше ${MAX_REMINDERS}`);
+    selected.add(minutes);
+    amount.value = '';
+    customOpen = false;
+    customRow.hidden = true;
+    showError(error, null);
+    haptic.success();
+    render();
+  });
+
+  render();
+  return {
+    el: h('div', { class: 'field' }, h('span', { class: 'field__label' }, 'Напоминания'), row, customRow, summary, error),
+    value() {
+      const list = sortOffsets([...selected]);
+      return reminderOffsetsError(list) ?? list;
+    },
+  };
+}
+
+/* ───────────────────────── Время в текстах правил ───────────────────────── */
+
+/** `TimeFormat` для общих правил: «19:00» и «24 октября» (если не сегодня) в поясе клуба. */
+function clubFormat(): TimeFormat {
+  const dayFmt = new Intl.DateTimeFormat('ru-RU', { day: 'numeric', month: 'long', timeZone: clubTz() });
+  const today = dayFmt.format(new Date());
+  return {
+    time: fmtTime,
+    day: (iso) => {
+      const d = dayFmt.format(new Date(iso));
+      return d === today ? null : d;
+    },
+  };
+}
+
+/** Проверка времени перед действием: ошибка — toast и false. */
+function timeOk(problem: string | null): boolean {
+  if (!problem) return true;
+  haptic.error();
+  toast(problem, 'error');
+  return false;
+}
+
+/** Однострочная подсказка «доступно с …», если действие пока рано. */
+function earlyHint(startsAt: string, minutes: number, label: string): HTMLElement | null {
+  const from = Date.parse(startsAt) - minutes * MINUTE_MS;
+  if (Date.now() >= from) return null;
+  const iso = new Date(from).toISOString();
+  return h('p', { class: 'action-hint tabular' }, `${label} — ${fmtWhen(iso).toLowerCase()}`);
+}
+
 /* ───────────────────────── Форма турнира ───────────────────────── */
 
 interface TournamentForm {
@@ -753,6 +885,12 @@ function tournamentForm(initial: TournamentDetail | null, save: (input: Tourname
   const tableSize = numInput(initial?.tableSize ?? 9, { min: 2, max: 10, required: true });
   const dealer = h('input', { class: 'input', value: initial?.dealer ?? '', maxLength: 80, placeholder: 'Например, Анна' });
   const openNow = h('input', { type: 'checkbox', class: 'check__input', checked: true });
+  const announceNow = h('input', { type: 'checkbox', class: 'check__input', checked: true });
+  const announceRow = h('label', { class: 'check' }, announceNow, h('span', null, 'Отправить анонс игрокам'), h('span', { class: 'check__hint' }, 'всем, кто подписан на анонсы'));
+  openNow.addEventListener('change', () => {
+    announceRow.hidden = !openNow.checked;
+  });
+  const reminders = remindersPicker(initial?.reminderOffsets ?? DEFAULT_REMINDER_OFFSETS);
   let game: GameType = initial?.game ?? 'nlh';
   const gameHint = h('p', { class: 'field__hint' }, GAME_LABELS[game]);
   const gameSwitch = segmented<GameType>(
@@ -807,9 +945,11 @@ function tournamentForm(initial: TournamentDetail | null, save: (input: Tourname
         field('Игроков за столом', tableSize, 'От 2 до 10'),
         field('Дилер', dealer, 'Пусто — не показывать'),
       ),
+      reminders.el,
       initial
         ? null
         : h('label', { class: 'check' }, openNow, h('span', null, 'Сразу открыть регистрацию'), h('span', { class: 'check__hint' }, 'иначе сохранится черновиком')),
+      initial ? null : announceRow,
     ),
     h('section', null, sectionTitle('Структура блайндов'), h('div', { class: 'card card--pad' }, levels.el)),
     h('section', null, sectionTitle('Ре-энтри'), h('div', { class: 'card card--pad' }, reentries.el)),
@@ -847,6 +987,24 @@ function tournamentForm(initial: TournamentDetail | null, save: (input: Tourname
     if (typeof ad === 'string') return fail(error, ad);
     const perTable = intOf(tableSize);
     if (perTable === null || perTable < 2 || perTable > 10) return fail(error, 'За столом может быть от 2 до 10 игроков');
+    const startingStack = intOf(stack);
+    const stacksChanged =
+      !initial ||
+      startingStack !== initial.startingStack ||
+      !sameLevels(lv, initial.blindLevels) ||
+      JSON.stringify(re) !== JSON.stringify(initial.reentries) ||
+      JSON.stringify(ad) !== JSON.stringify(initial.addons);
+    if (stacksChanged) {
+      const stackProblem = stackError({ startingStack, levels: lv, reentries: re, addons: ad });
+      if (stackProblem) return fail(error, stackProblem);
+    }
+    const seats = intOf(capacity) ?? 2;
+    if (initial && seats !== initial.capacity) {
+      const capProblem = capacityError(seats, initial.registeredCount);
+      if (capProblem) return fail(error, capProblem);
+    }
+    const offsets = reminders.value();
+    if (typeof offsets === 'string') return fail(error, offsets);
     showError(error, null);
 
     const input: TournamentInput = {
@@ -856,17 +1014,21 @@ function tournamentForm(initial: TournamentDetail | null, save: (input: Tourname
       game,
       startsAt: startIso,
       lateRegUntil: lateIso,
-      capacity: intOf(capacity) ?? 2,
+      capacity: seats,
       buyIn: intOf(buyIn) ?? 0,
-      startingStack: intOf(stack),
+      startingStack,
       knockoutPoints: intOf(koPoints) ?? 0,
       tableSize: perTable,
       dealer: dealer.value.trim(),
       blindLevels: lv,
       reentries: re,
       addons: ad,
+      reminderOffsets: offsets,
     };
-    if (!initial) input.status = openNow.checked ? 'registration' : 'draft';
+    if (!initial) {
+      input.status = openNow.checked ? 'registration' : 'draft';
+      if (openNow.checked) input.announce = announceNow.checked;
+    }
     return input;
   };
 
@@ -967,7 +1129,8 @@ interface Ctx {
 
 function statusActions(ctx: Ctx): HTMLElement {
   const d = ctx.detail;
-  const setStatus = (status: TournamentStatus, message: string) => () => ctx.apply(() => api.admin.setStatus(ctx.id, status), message);
+  const setStatus = (status: TournamentStatus, message: string, opts: { announce?: boolean } = {}) => () =>
+    ctx.apply(() => api.admin.setStatus(ctx.id, status, opts), message);
   const confirmThen = (question: string, run: () => Promise<void>) => async (): Promise<void> => {
     haptic.warning();
     if (await confirmDialog(question)) await run();
@@ -980,15 +1143,33 @@ function statusActions(ctx: Ctx): HTMLElement {
 
   let buttons: HTMLElement[] = [];
   let text = '';
+  let extra: HTMLElement | null = null;
   switch (d.status) {
-    case 'draft':
+    case 'draft': {
       text = 'Черновик видят только админы. Откройте регистрацию, когда всё готово.';
-      buttons = [actionButton('Открыть регистрацию', setStatus('registration', 'Регистрация открыта'), { tone: 'primary', iconName: 'check' })];
+      const announce = h('input', { type: 'checkbox', class: 'check__input', checked: true });
+      extra = h('label', { class: 'check' }, announce, h('span', null, 'Отправить анонс игрокам'), h('span', { class: 'check__hint' }, 'всем, кто подписан на анонсы'));
+      buttons = [
+        actionButton(
+          'Открыть регистрацию',
+          () => setStatus('registration', announce.checked ? 'Регистрация открыта, анонс отправляется' : 'Регистрация открыта', { announce: announce.checked })(),
+          { tone: 'primary', iconName: 'check' },
+        ),
+      ];
       break;
+    }
     case 'registration':
       text = 'Идёт регистрация. Старт турнира закроет её (кроме поздней регистрации).';
+      extra = earlyHint(d.startsAt, EARLY_START_MIN, 'Начать можно');
       buttons = [
-        actionButton('Начать турнир', confirmThen('Начать турнир сейчас?', setStatus('running', 'Турнир начался')), { tone: 'primary', iconName: 'spark' }),
+        actionButton(
+          'Начать турнир',
+          async () => {
+            if (!timeOk(earlyStartError(d.startsAt, Date.now(), clubFormat()))) return;
+            await confirmThen('Начать турнир сейчас?', setStatus('running', 'Турнир начался'))();
+          },
+          { tone: 'primary', iconName: 'spark' },
+        ),
         cancel,
       ];
       break;
@@ -1008,6 +1189,10 @@ function statusActions(ctx: Ctx): HTMLElement {
     { class: 'card card--pad stack' },
     h('div', { class: 'admin-status' }, statusBadge(d.status), h('span', { class: 'muted' }, `${d.registeredCount} / ${d.capacity} · очередь ${d.waitlistCount}`)),
     h('p', { class: 'muted' }, text),
+    d.status !== 'draft'
+      ? h('p', { class: 'action-hint tabular' }, d.announcedAt ? `Анонс разослан ${fmtWhen(d.announcedAt).toLowerCase()}` : 'Анонс не рассылался')
+      : null,
+    extra,
     buttons.length ? h('div', { class: 'btn-row' }, buttons) : null,
   );
 }
@@ -1026,7 +1211,14 @@ function clockSection(ctx: Ctx, onWidget: (w: ClockWidget | null) => void): HTML
   const buttons: HTMLElement[] = [];
   if (!c) {
     buttons.push(
-      actionButton('Запустить часы', run('start', 'Часы запущены'), { tone: 'primary', iconName: 'clock' }),
+      actionButton(
+        'Запустить часы',
+        async () => {
+          if (!timeOk(earlyStartError(d.startsAt, Date.now(), clubFormat()))) return;
+          await run('start', 'Часы запущены')();
+        },
+        { tone: 'primary', iconName: 'clock' },
+      ),
     );
   } else {
     if (c.paused) buttons.push(actionButton('Продолжить', run('resume', 'Часы идут'), { tone: 'primary', iconName: 'clock' }));
@@ -1051,6 +1243,7 @@ function clockSection(ctx: Ctx, onWidget: (w: ClockWidget | null) => void): HTML
       : !c && d.status === 'registration'
         ? h('p', { class: 'muted' }, 'Запуск часов переведёт турнир в статус LIVE.')
         : null,
+    d.blindLevels.length && !c ? earlyHint(d.startsAt, EARLY_START_MIN, 'Запуск часов') : null,
     d.blindLevels.length ? h('div', { class: 'btn-row' }, buttons) : null,
   );
 }
@@ -1085,9 +1278,11 @@ function seatingSection(ctx: Ctx): HTMLElement | null {
       { class: 'card card--pad stack' },
       field('Размер стола', size),
       tables,
+      earlyHint(d.startsAt, EARLY_SEATING_MIN, 'Рассадка доступна'),
       actionButton(
         seated ? 'Пересадить заново' : 'Рассадить случайно',
         async () => {
+          if (!timeOk(earlySeatingError(d.startsAt, Date.now(), clubFormat()))) return;
           if (seated && !(await confirmDialog('Рассадка уже есть. Перемешать игроков заново? Всем придут новые места.'))) return;
           await ctx.apply(() => api.admin.seating(ctx.id, Number(size.value)), 'Игроки рассажены, места отправлены');
         },
@@ -1192,6 +1387,7 @@ function resultsSection(ctx: Ctx): HTMLElement | null {
         actionButton(
           d.results ? 'Пересчитать и опубликовать' : 'Опубликовать результаты',
           async () => {
+            if (!timeOk(resultsTimeError(d, Date.now(), clubFormat()))) return;
             const entries = validate();
             if (!entries) return;
             const ok = await confirmDialog(

@@ -206,12 +206,23 @@ async function insertAll(q: TxSql, data: Converted): Promise<void> {
       results_published_at timestamptz, created_at timestamptz)`;
 
   await q`
-    INSERT INTO registrations (id, tournament_id, player_id, status, created_at, updated_at, table_no, seat_no, reminded_24h, reminded_2h)
+    INSERT INTO registrations (id, tournament_id, player_id, status, created_at, updated_at, table_no, seat_no)
     OVERRIDING SYSTEM VALUE
-    SELECT id, tournament_id, player_id, status, created_at, updated_at, table_no, seat_no, reminded_24h, reminded_2h
+    SELECT id, tournament_id, player_id, status, created_at, updated_at, table_no, seat_no
     FROM jsonb_to_recordset(${json(data.registrations)}) AS x(
       id integer, tournament_id integer, player_id integer, status text, created_at timestamptz,
-      updated_at timestamptz, table_no integer, seat_no integer, reminded_24h boolean, reminded_2h boolean)`;
+      updated_at timestamptz, table_no integer, seat_no integer)`;
+
+  // Флаги старой схемы reminded_24h / reminded_2h → отметки reminder_deliveries (migration 004).
+  await q`
+    INSERT INTO reminder_deliveries (registration_id, offset_min)
+    SELECT x.id, o.offset_min
+    FROM jsonb_to_recordset(${json(data.registrations)}) AS x(id integer, reminded_24h boolean, reminded_2h boolean)
+    CROSS JOIN LATERAL (VALUES (1440, x.reminded_24h), (120, x.reminded_2h)) AS o(offset_min, sent)
+    WHERE o.sent`;
+
+  // Перенесённые открытые/прошедшие турниры повторно не анонсируем.
+  await q`UPDATE tournaments SET announced_at = created_at WHERE status <> 'draft' AND announced_at IS NULL`;
 
   await q`
     INSERT INTO results (id, tournament_id, player_id, place, knockouts, points)
@@ -268,7 +279,7 @@ async function main(): Promise<void> {
         );
       }
       console.warn(`[import] --force: очищаем ${nonEmpty.join(', ')}`);
-      await q`TRUNCATE avatars, players, tournaments, registrations, results RESTART IDENTITY`;
+      await q`TRUNCATE avatars, players, tournaments, registrations, reminder_deliveries, results RESTART IDENTITY`;
     }
     await insertAll(q, data);
     await resetSequences(q);

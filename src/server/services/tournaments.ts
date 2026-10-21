@@ -22,22 +22,50 @@ import { tx } from '../db.ts';
 import { badRequest, conflict, notFound } from '../http.ts';
 import * as repo from '../repo.ts';
 import type { PlayerRow, RegistrationRow, TournamentFields, TournamentRow } from '../repo.ts';
-import { HOUR_MS, nowIso, toIso } from '../time.ts';
-import { START_GRACE_MIN, levelsError, sameLevels, sameMinute, scheduleError } from '../../shared/rules.ts';
+import { config } from '../config.ts';
+import { clubTimeFormat, nowIso, toIso } from '../time.ts';
+import {
+  DEFAULT_REMINDER_OFFSETS,
+  START_GRACE_MIN,
+  capacityError,
+  earlySeatingError,
+  earlyStartError,
+  levelsError,
+  registrationClosedReason,
+  registrationOpen,
+  reminderOffsetsError,
+  resultsTimeError,
+  sameLevels,
+  sameMinute,
+  scheduleError,
+  sortOffsets,
+  stackError,
+} from '../../shared/rules.ts';
+import type { TimingInput } from '../../shared/rules.ts';
+import { scheduleAnnouncement } from './announcements.ts';
 import { rowFormats } from './formats.ts';
 import { clockState } from './clock.ts';
-import { notifyLater } from './notifier.ts';
+import { notificationsEnabled, notifyLater } from './notifier.ts';
 import { briefBuilder } from './ratings.ts';
 import { pointsFor } from './scoring.ts';
 import { balancedSeating } from './seating.ts';
 
 // ───────────────────────────── Вспомогательное ─────────────────────────────
 
-/** Открыта ли запись: статус registration, либо турнир идёт и не закончилась поздняя регистрация. */
-export function isRegistrationOpen(t: TournamentRow, now: string = nowIso()): boolean {
-  if (t.status === 'registration') return true;
-  return t.status === 'running' && t.late_reg_until !== null && now < t.late_reg_until;
+function timing(t: TournamentRow): TimingInput {
+  return { status: t.status, startsAt: t.starts_at, lateRegUntil: t.late_reg_until };
 }
+
+/**
+ * Открыта ли запись (правило — `registrationOpen` в shared/rules.ts): статус registration и старт
+ * не наступил, либо (registration | running) и не закончилась поздняя регистрация.
+ */
+export function isRegistrationOpen(t: TournamentRow, now: string = nowIso()): boolean {
+  return registrationOpen(timing(t), Date.parse(now));
+}
+
+/** Форматирование времени в поясе клуба для текстов ошибок. */
+const fmt = () => clubTimeFormat(config.clubTz);
 
 /** Турнир начался: часы/статус «идёт» или уже наступило время старта. */
 export function hasStarted(t: TournamentRow, now: string = nowIso()): boolean {
@@ -78,11 +106,17 @@ async function lockTournament(id: number): Promise<TournamentRow> {
 
 /**
  * Переводит людей из листа ожидания в участники, пока есть свободные места (FIFO).
+ * Только пока запись открыта: после старта — лишь во время поздней регистрации, после её
+ * закрытия очередь «замораживается» (место за столом уже не получить).
  * Вызывать внутри транзакции после `lockTournament()`. Возвращает Telegram ID повышенных.
  */
 async function promoteFromWaitlist(t: TournamentRow): Promise<number[]> {
+  if (!isRegistrationOpen(t)) return [];
   const free = t.capacity - (await repo.countRegistered(t.id));
-  return repo.promoteWaitlist(t.id, free);
+  const promoted = await repo.promoteWaitlist(t.id, free);
+  // Повышенному придёт «вы в игре» — уже открывшиеся окна напоминаний ему не нужны.
+  await repo.skipStartedReminders(promoted.map((r) => r.id), nowIso());
+  return promoted.map((r) => r.tg_id);
 }
 
 function notifyPromoted(t: TournamentRow, promotedTgIds: readonly number[]): void {
@@ -148,7 +182,8 @@ async function playersOf(regs: readonly RegistrationRow[]): Promise<PlayerRow[]>
   return regs.map((r) => byId.get(r.player_id)).filter((p): p is PlayerRow => p !== undefined);
 }
 
-export async function buildDetail(t: TournamentRow, viewer: PlayerRow): Promise<TournamentDetail> {
+/** Полный DTO турнира. `isAdmin` — показывать ли служебные поля (announcedAt). */
+export async function buildDetail(t: TournamentRow, viewer: PlayerRow, isAdmin = false): Promise<TournamentDetail> {
   const [brief, ctx, registered, waitlisted] = await Promise.all([
     briefBuilder(),
     viewerContext(viewer),
@@ -177,11 +212,13 @@ export async function buildDetail(t: TournamentRow, viewer: PlayerRow): Promise<
     participants: registered.map(brief),
     waitlist: waitlisted.map(brief),
     results,
+    reminderOffsets: sortOffsets(t.reminder_offsets),
+    announcedAt: isAdmin ? t.announced_at : null,
   };
 }
 
 export async function getTournamentDetail(id: number, viewer: PlayerRow, isAdmin: boolean): Promise<TournamentDetail> {
-  return buildDetail(await getVisibleTournament(id, isAdmin), viewer);
+  return buildDetail(await getVisibleTournament(id, isAdmin), viewer, isAdmin);
 }
 
 const UPCOMING: readonly TournamentStatus[] = ['registration', 'running'];
@@ -228,13 +265,13 @@ export async function registerPlayer(
     if (existing && existing.status !== 'cancelled') {
       return { tournament: t, status: existing.status, waitlistPosition: await repo.waitlistPosition(existing), unchanged: true };
     }
-    if (!isRegistrationOpen(t)) {
-      throw conflict(t.status === 'running' ? 'Поздняя регистрация уже закрыта' : 'Регистрация на этот турнир закрыта');
-    }
+    const now = nowIso();
+    const closed = registrationClosedReason(timing(t), Date.parse(now));
+    if (closed) throw conflict(closed);
     const status = (await repo.countRegistered(t.id)) < t.capacity ? 'registered' : 'waitlist';
-    // Если до старта уже меньше 24 ч / 2 ч — соответствующие напоминания не нужны.
-    const msToStart = Date.parse(t.starts_at) - Date.now();
-    await repo.upsertRegistration(t.id, player.id, status, { h24: msToStart <= 24 * HOUR_MS, h2: msToStart <= 2 * HOUR_MS });
+    const regId = await repo.upsertRegistration(t.id, player.id, status);
+    // Окна напоминаний, которые уже открылись, не нужны: игрок только что получил «Вы записаны».
+    await repo.skipStartedReminders([regId], now);
     const reg = (await repo.findRegistration(t.id, player.id))!;
     return { tournament: t, status, waitlistPosition: await repo.waitlistPosition(reg), unchanged: false };
   });
@@ -275,6 +312,8 @@ interface FieldChecks {
   validate: boolean;
   /** Старт не должен быть в прошлом (новый турнир, перенос даты, открытие регистрации). */
   requireFuture: boolean;
+  /** Проверять стеки (стартовый > BB первого уровня, ре-энтри/add-on > 0) — если они или структура менялись. */
+  validateStacks: boolean;
 }
 
 /** Проверяет логику времени и структуры (общие правила из shared/rules.ts) и собирает поля для БД. */
@@ -282,12 +321,22 @@ function toFields(input: TournamentInput, status: TournamentStatus, checks: Fiel
   const startsAt = toIso(input.startsAt);
   const lateRegUntil = input.lateRegUntil ? toIso(input.lateRegUntil) : null;
   const levels = input.blindLevels ?? [];
+  const reentries = input.reentries ?? [];
+  const addons = input.addons ?? [];
+  const startingStack = input.startingStack ?? null;
+  const offsets = input.reminderOffsets ?? [...DEFAULT_REMINDER_OFFSETS];
   if (checks.validate) {
     const problem =
       levelsError(levels) ??
       scheduleError({ startsAt, lateRegUntil, levels, now: Date.now(), requireFuture: checks.requireFuture });
     if (problem) throw badRequest(problem);
   }
+  if (checks.validateStacks) {
+    const problem = stackError({ startingStack, levels, reentries, addons });
+    if (problem) throw badRequest(problem);
+  }
+  const offsetsProblem = reminderOffsetsError(offsets);
+  if (offsetsProblem) throw badRequest(offsetsProblem);
   return {
     title: input.title.trim(),
     subtitle: input.subtitle?.trim() ?? '',
@@ -298,14 +347,15 @@ function toFields(input: TournamentInput, status: TournamentStatus, checks: Fiel
     status,
     capacity: input.capacity,
     buy_in: input.buyIn,
-    starting_stack: input.startingStack ?? null,
+    starting_stack: startingStack,
     knockout_points: input.knockoutPoints ?? 0,
     // Стол не больше вместимости турнира: на 6 мест — один стол на 6.
     table_size: Math.max(2, Math.min(input.tableSize ?? 9, input.capacity)),
     dealer: input.dealer?.trim() ?? '',
-    reentries: input.reentries ?? [],
-    addons: input.addons ?? [],
+    reentries,
+    addons,
     blind_levels: levels,
+    reminder_offsets: sortOffsets(offsets),
   };
 }
 
@@ -326,17 +376,48 @@ function rowToInput(t: TournamentRow): TournamentInput {
     reentries: t.reentries,
     addons: t.addons,
     blindLevels: t.blind_levels,
+    reminderOffsets: t.reminder_offsets,
   };
 }
 
-export async function createTournament(input: TournamentInput): Promise<TournamentRow> {
-  const id = await repo.insertTournament(toFields(input, input.status ?? 'draft', { validate: true, requireFuture: true }));
-  return requireTournament(id);
+/**
+ * Анонс при открытии регистрации: вызывать внутри транзакции, уже поставившей статус registration.
+ * Возвращает турнир, если анонс «забран» этой транзакцией (разослать после коммита), иначе null.
+ */
+async function claimAnnouncementIf(id: number, announce: boolean | undefined): Promise<TournamentRow | null> {
+  if (announce === false) return null;
+  if (!notificationsEnabled()) {
+    // Бот выключен: не ставим announced_at, иначе турнир навсегда числился бы «анонсированным».
+    console.warn(`[announce] t=${id}: бот выключен (нет BOT_TOKEN) — анонс не рассылается`);
+    return null;
+  }
+  return (await repo.claimAnnouncement(id)) ?? null;
 }
 
-/** Частичная правка. Уменьшение capacity никого не выкидывает; увеличение — повышает очередь. */
+function sendAnnouncement(t: TournamentRow | null): void {
+  if (t) void scheduleAnnouncement(t).catch((err: unknown) => console.error('[announce]', err));
+}
+
+export async function createTournament(input: TournamentInput): Promise<TournamentRow> {
+  let announce: TournamentRow | null = null;
+  const t = await tx(async () => {
+    const status = input.status ?? 'draft';
+    const id = await repo.insertTournament(toFields(input, status, { validate: true, requireFuture: true, validateStacks: true }));
+    if (status === 'registration') announce = await claimAnnouncementIf(id, input.announce);
+    return requireTournament(id);
+  });
+  sendAnnouncement(announce);
+  return t;
+}
+
+/**
+ * Частичная правка. Capacity нельзя опустить ниже числа записанных (409); увеличение — повышает
+ * очередь (пока запись открыта). Перенос старта сбрасывает отметки напоминаний турнира.
+ * Смена статуса draft → registration рассылает анонс (если `patch.announce !== false`).
+ */
 export async function updateTournament(id: number, patch: Partial<TournamentInput>): Promise<TournamentRow> {
   let promoted: number[] = [];
+  let announce: TournamentRow | null = null;
   const t = await tx(async () => {
     const current = await lockTournament(id);
     let status = current.status;
@@ -344,14 +425,24 @@ export async function updateTournament(id: number, patch: Partial<TournamentInpu
       assertTransition(current.status, patch.status);
       status = patch.status;
     }
-    const { status: _ignored, ...rest } = patch;
+    const { status: _ignored, announce: announceFlag, ...rest } = patch;
     const next = { ...rowToInput(current), ...rest };
     // Сравниваем с точностью до минуты: секунды в форме не вводятся и не должны считаться «переносом».
     const startMoved = !sameMinute(toIso(next.startsAt), current.starts_at);
     const lateMoved = !sameMinute(next.lateRegUntil ? toIso(next.lateRegUntil) : null, current.late_reg_until);
     const levelsChanged = !sameLevels(next.blindLevels ?? [], current.blind_levels);
+    const stacksChanged =
+      levelsChanged ||
+      (next.startingStack ?? null) !== current.starting_stack ||
+      JSON.stringify(next.reentries ?? []) !== JSON.stringify(current.reentries) ||
+      JSON.stringify(next.addons ?? []) !== JSON.stringify(current.addons);
     const opening = current.status === 'draft' && status === 'registration';
     const notStarted = status === 'draft' || status === 'registration';
+
+    if (next.capacity !== current.capacity) {
+      const problem = capacityError(next.capacity, await repo.countRegistered(id));
+      if (problem) throw conflict(problem);
+    }
 
     if (startMoved && (status === 'completed' || status === 'cancelled')) {
       throw conflict('Турнир завершён — дату старта менять нельзя');
@@ -366,13 +457,17 @@ export async function updateTournament(id: number, patch: Partial<TournamentInpu
       toFields(next, status, {
         validate: startMoved || lateMoved || levelsChanged || opening,
         requireFuture: notStarted && (startMoved || opening),
+        validateStacks: stacksChanged || opening,
       }),
     );
+    if (startMoved) await repo.resetReminders(id);
+    if (opening) announce = await claimAnnouncementIf(id, announceFlag);
     const updated = await requireTournament(id);
     if (updated.status === 'registration' || updated.status === 'running') promoted = await promoteFromWaitlist(updated);
     return updated;
   });
   notifyPromoted(t, promoted);
+  sendAnnouncement(announce);
   return t;
 }
 
@@ -400,24 +495,37 @@ const STATUS_LABELS: Record<TournamentStatus, string> = {
   cancelled: 'отменён',
 };
 
-/** Смена статуса по правилам; при отмене уведомляем всех записавшихся и очередь. */
-export async function changeStatus(id: number, to: TournamentStatus): Promise<TournamentRow> {
+/**
+ * Смена статуса по правилам; при отмене уведомляем всех записавшихся и очередь.
+ * registration → running — не раньше чем за EARLY_START_MIN до старта (409).
+ * draft → registration — анонс игрокам, если `opts.announce !== false` (один раз за жизнь турнира).
+ */
+export async function changeStatus(id: number, to: TournamentStatus, opts: { announce?: boolean } = {}): Promise<TournamentRow> {
   let notifyTgIds: number[] = [];
+  let announce: TournamentRow | null = null;
   const t = await tx(async () => {
     const current = await lockTournament(id);
     if (current.status === to) return current;
     assertTransition(current.status, to);
     if (current.status === 'draft' && to === 'registration') {
-      const problem = levelsError(current.blind_levels) ?? scheduleError({
-        startsAt: current.starts_at,
-        lateRegUntil: current.late_reg_until,
-        levels: current.blind_levels,
-        now: Date.now(),
-        requireFuture: true,
-      });
+      const problem =
+        levelsError(current.blind_levels) ??
+        scheduleError({
+          startsAt: current.starts_at,
+          lateRegUntil: current.late_reg_until,
+          levels: current.blind_levels,
+          now: Date.now(),
+          requireFuture: true,
+        }) ??
+        stackError({ startingStack: current.starting_stack, levels: current.blind_levels, reentries: current.reentries, addons: current.addons });
       if (problem) throw badRequest(`Нельзя открыть регистрацию: ${problem.charAt(0).toLowerCase()}${problem.slice(1)}`);
     }
+    if (to === 'running') {
+      const early = earlyStartError(current.starts_at, Date.now(), fmt());
+      if (early) throw conflict(early);
+    }
     await repo.setTournamentStatus(id, to);
+    if (to === 'registration') announce = await claimAnnouncementIf(id, opts.announce);
     if (to === 'cancelled') {
       const regs = [...(await repo.listRegistrations(id, 'registered')), ...(await repo.listRegistrations(id, 'waitlist'))];
       notifyTgIds = (await playersOf(regs)).map((p) => p.tg_id);
@@ -425,6 +533,7 @@ export async function changeStatus(id: number, to: TournamentStatus): Promise<To
     return requireTournament(id);
   });
   for (const tgId of notifyTgIds) notifyLater((n) => n.tournamentCancelled(tgId, t));
+  sendAnnouncement(announce);
   return t;
 }
 
@@ -441,6 +550,8 @@ export async function seatPlayers(id: number, tableSize?: number): Promise<Tourn
     if (t.status !== 'registration' && t.status !== 'running') throw conflict('Рассадка доступна только до завершения турнира');
     const regs = await repo.listRegistrations(id, 'registered');
     if (regs.length === 0) throw conflict('Некого рассаживать — нет участников');
+    const early = earlySeatingError(t.starts_at, Date.now(), fmt());
+    if (early) throw conflict(early);
     const size = Math.max(2, Math.min(tableSize ?? t.table_size, t.capacity));
     if (size !== t.table_size) await repo.setTableSize(id, size);
     const seating = balancedSeating(
@@ -477,6 +588,8 @@ export async function controlClock(id: number, action: ClockAction): Promise<Tou
         if (t.status !== 'registration' && t.status !== 'running') throw conflict('Часы можно запустить только у открытого или идущего турнира');
         if (t.clock_started_at) throw conflict('Часы уже запущены');
         if (t.blind_levels.length === 0) throw conflict('Сначала задайте структуру блайндов');
+        const early = earlyStartError(t.starts_at, Date.parse(now), fmt());
+        if (early) throw conflict(early);
         await repo.setClock(id, now, null, 0);
         if (t.status === 'registration') await repo.setTournamentStatus(id, 'running');
         break;
@@ -505,8 +618,11 @@ export async function controlClock(id: number, action: ClockAction): Promise<Tou
 // ───────────────────────────── Админ: результаты ─────────────────────────────
 
 /**
- * Публикация (или исправление) результатов: места уникальны и идут 1..n, все игроки —
- * участники турнира. Очки считаются по формуле; турнир становится completed.
+ * Публикация (или исправление) результатов: турнир идёт (или уже завершён — исправление) и старт
+ * наступил (409). Места уникальны и идут 1..n, все игроки — участники турнира (registered).
+ * Можно внести не всех записанных: не пришедших оставляют без места, поэтому размер поля
+ * (fieldSize для очков и сообщения) — число игроков в итогах, n.
+ * Очки считаются по формуле; турнир становится completed.
  */
 export async function publishResults(id: number, entries: ResultEntryInput[]): Promise<TournamentRow> {
   const n = entries.length;
@@ -520,9 +636,8 @@ export async function publishResults(id: number, entries: ResultEntryInput[]): P
   const sent: Array<{ tgId: number; place: number; points: number }> = [];
   const t = await tx(async () => {
     const t = await lockTournament(id);
-    if (t.status !== 'running' && t.status !== 'registration' && t.status !== 'completed') {
-      throw conflict('Результаты можно внести только у проходящего или завершённого турнира');
-    }
+    const timeProblem = resultsTimeError(timing(t), Date.now(), fmt());
+    if (timeProblem) throw conflict(timeProblem);
     const registered = new Set((await repo.listRegistrations(id, 'registered')).map((r) => r.player_id));
     const stranger = entries.find((e) => !registered.has(e.playerId));
     if (stranger) throw badRequest(`Игрок #${stranger.playerId} не зарегистрирован на турнир`);
@@ -538,7 +653,7 @@ export async function publishResults(id: number, entries: ResultEntryInput[]): P
     await repo.markResultsPublished(id, nowIso());
     return requireTournament(id);
   });
-  for (const s of sent) notifyLater((n) => n.resultsPublished(s.tgId, t, s.place, s.points));
+  for (const s of sent) notifyLater((notifier) => notifier.resultsPublished(s.tgId, t, s.place, s.points, n));
   return t;
 }
 

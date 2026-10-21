@@ -9,7 +9,7 @@ import { requireAuth } from '../auth.ts';
 import { config } from '../config.ts';
 import { type AppEnv, badRequest, HttpError, jsonBody, parseInput } from '../http.ts';
 import { tournamentIcs } from '../services/calendar.ts';
-import { AVATAR_MAX_BYTES, buildMe, saveAvatar, updateNickname } from '../services/players.ts';
+import { AVATAR_MAX_BYTES, buildMe, saveAvatar, updateMe } from '../services/players.ts';
 import { leaderboard, playerStats } from '../services/ratings.ts';
 import { buildDetail, cancelRegistration, getTournamentDetail, getVisibleTournament, listTournamentCards, registerPlayer } from '../services/tournaments.ts';
 
@@ -18,14 +18,17 @@ export const IdParam = z.object({ id: z.coerce.number().int().positive() });
 const ScopeQuery = z.object({ scope: z.enum(['upcoming', 'past']).default('upcoming') });
 const PeriodQuery = z.object({ period: z.enum(['season', 'all']).default('season') });
 
-const NicknameBody = z.object({
+const MeBody = z.object({
   nickname: z
     .string()
     .trim()
     .max(32, 'Никнейм — не длиннее 32 символов')
     .refine((v) => v.length === 0 || v.length >= 2, 'Никнейм — минимум 2 символа')
     .refine((v) => !/[\p{Cc}\p{Cf}]/u.test(v), 'Никнейм содержит недопустимые символы')
-    .nullable(),
+    .nullable()
+    .optional(),
+  notifyAnnouncements: z.boolean().optional(),
+  notifyReminders: z.boolean().optional(),
 });
 
 export const publicApi = new Hono<AppEnv>();
@@ -34,7 +37,7 @@ export const publicApi = new Hono<AppEnv>();
 publicApi.get('/tournaments/:id/calendar.ics', async (c) => {
   const { id } = parseInput(IdParam, c.req.param());
   const t = await getVisibleTournament(id, false);
-  const ics = tournamentIcs(t, { url: `${config.webappUrl}/#/t/${t.id}`, location: `${config.clubName}, ${config.clubCity}` });
+  const ics = tournamentIcs(t, { url: `${config.webappUrl}/?route=${encodeURIComponent(`/t/${t.id}`)}`, location: `${config.clubName}, ${config.clubCity}` });
   return c.body(ics, 200, {
     'Content-Type': 'text/calendar; charset=utf-8',
     'Content-Disposition': `attachment; filename="showdown-${t.id}.ics"`,
@@ -48,8 +51,8 @@ publicApi.use('*', requireAuth);
 publicApi.get('/me', (c) => c.json<Me>(buildMe(c.get('player'), c.get('isAdmin'))));
 
 publicApi.patch('/me', async (c) => {
-  const { nickname } = parseInput(NicknameBody, await jsonBody(c));
-  const player = await updateNickname(c.get('player'), nickname);
+  const body = parseInput(MeBody, await jsonBody(c));
+  const player = await updateMe(c.get('player'), body);
   return c.json<Me>(buildMe(player, c.get('isAdmin')));
 });
 
@@ -89,13 +92,13 @@ publicApi.get('/tournaments/:id', async (c) => {
 publicApi.post('/tournaments/:id/registration', async (c) => {
   const { id } = parseInput(IdParam, c.req.param());
   const { tournament } = await registerPlayer(id, c.get('player'), { isAdmin: c.get('isAdmin') });
-  return c.json<TournamentDetail>(await buildDetail(tournament, c.get('player')));
+  return c.json<TournamentDetail>(await buildDetail(tournament, c.get('player'), c.get('isAdmin')));
 });
 
 publicApi.delete('/tournaments/:id/registration', async (c) => {
   const { id } = parseInput(IdParam, c.req.param());
   const { tournament } = await cancelRegistration(id, c.get('player'), { isAdmin: c.get('isAdmin') });
-  return c.json<TournamentDetail>(await buildDetail(tournament, c.get('player')));
+  return c.json<TournamentDetail>(await buildDetail(tournament, c.get('player'), c.get('isAdmin')));
 });
 
 // ── Рейтинг ──

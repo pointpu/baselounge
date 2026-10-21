@@ -2,7 +2,7 @@
  * Мой профиль: аватар (тап — сменить), никнейм (bottom sheet), подтверждение телефона,
  * статистика, ачивки, история.
  */
-import type { Me } from '../../shared/types.ts';
+import type { Me, NotifyPrefs } from '../../shared/types.ts';
 import { api, errorMessage } from '../api.ts';
 import { me, setMe } from '../state.ts';
 import { haptic, requestContact } from '../tg.ts';
@@ -40,7 +40,7 @@ function editNickname(onSaved: () => void): void {
         return false;
       }
       try {
-        setMe(await api.updateMe(value));
+        setMe(await api.updateMe({ nickname: value }));
         toast('Никнейм обновлён', 'success');
         onSaved();
         return true;
@@ -150,6 +150,65 @@ function phoneCard(onVerified: () => void): HTMLElement | null {
   );
 }
 
+/**
+ * Переключатель (role="switch"): мгновенно меняет вид (оптимистично), сохраняет на сервере,
+ * при ошибке возвращает прежнее значение.
+ */
+function notifySwitch(key: keyof NotifyPrefs, title: string, hint: string): HTMLElement {
+  const field = key === 'announcements' ? 'notifyAnnouncements' : 'notifyReminders';
+  const titleId = `notify-${key}`;
+  const button = h('button', {
+    type: 'button',
+    class: 'switch',
+    attrs: { role: 'switch', 'aria-checked': me().notify[key], 'aria-labelledby': titleId },
+  });
+  const set = (on: boolean): void => button.setAttribute('aria-checked', String(on));
+  let saving = false;
+  button.addEventListener('click', () => {
+    if (saving) return;
+    const prev = me().notify[key];
+    const next = !prev;
+    set(next);
+    haptic.select();
+    saving = true;
+    void api
+      .updateMe({ [field]: next })
+      .then((fresh) => {
+        setMe(fresh);
+        set(fresh.notify[key]);
+      })
+      .catch((error: unknown) => {
+        set(prev);
+        haptic.error();
+        toast(errorMessage(error), 'error');
+      })
+      .finally(() => {
+        saving = false;
+      });
+  });
+  return h(
+    'div',
+    { class: 'toggle-row' },
+    h('span', { class: 'toggle-row__text' }, h('span', { class: 'toggle-row__title', id: titleId }, title), h('span', { class: 'toggle-row__hint' }, hint)),
+    button,
+  );
+}
+
+function notifyCard(): HTMLElement {
+  return h(
+    'section',
+    null,
+    h('div', { class: 'section-title' }, h('h2', null, 'Уведомления')),
+    h(
+      'div',
+      { class: 'card card--pad stack' },
+      notifySwitch('announcements', 'Анонсы турниров', 'Когда открывается запись'),
+      notifySwitch('reminders', 'Напоминания', 'Перед стартом ваших турниров'),
+      h('p', { class: 'field__hint' }, 'Рассадка, итоги и отмена ваших турниров приходят всегда.'),
+    ),
+  );
+}
+
 export async function render(root: HTMLElement): Promise<void> {
   const headSlot = h('div');
   const phoneSlot = h('div');
@@ -160,7 +219,7 @@ export async function render(root: HTMLElement): Promise<void> {
     setChildren(phoneSlot, phoneCard(drawHead));
   };
   drawHead();
-  setChildren(root, headSlot, phoneSlot, statsSlot, rulesLink());
+  setChildren(root, headSlot, phoneSlot, statsSlot, notifyCard(), rulesLink());
 
   try {
     const stats = await api.myStats();

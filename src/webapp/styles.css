@@ -537,6 +537,9 @@ a.list__row:active {
 
 .btn-row > .btn {
   flex: 1 1 140px;
+  /* Текст кнопки не переносится: не влезают рядом — кнопка уходит на следующую строку. */
+  min-width: fit-content;
+  white-space: nowrap;
 }
 
 /* Админка: кнопки «Пауза / Сбросить» и подсказки не должны прилипать к часам. */
@@ -3029,4 +3032,123 @@ a.link-row:active {
   .tcard {
     border: 1px solid CanvasText;
   }
+}
+
+/* ───────────────────────── Переключатели уведомлений (профиль) ───────────────────────── */
+
+.toggle-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-height: var(--touch);
+}
+
+.toggle-row__text {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.toggle-row__title,
+.toggle-row__hint {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.toggle-row__title {
+  font-weight: 600;
+}
+
+.toggle-row__hint {
+  color: var(--hint);
+  font-size: 13px;
+}
+
+/* Сам переключатель: 51×31, как в iOS; тач-цель расширена псевдоэлементом до 44 px. */
+.switch {
+  position: relative;
+  flex: none;
+  width: 51px;
+  height: 31px;
+  padding: 0;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-pill);
+  background: var(--fill-strong);
+  cursor: pointer;
+  transition:
+    background-color 0.2s,
+    border-color 0.2s;
+}
+
+.switch::before {
+  content: '';
+  position: absolute;
+  inset: -7px -2px;
+}
+
+.switch::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 25px;
+  height: 25px;
+  border-radius: 50%;
+  background: var(--text);
+  box-shadow: 0 1px 3px rgb(0 0 0 / 0.4);
+  transition: transform 0.2s var(--ease);
+}
+
+.switch[aria-checked='true'] {
+  border-color: transparent;
+  background: var(--gold-gradient);
+}
+
+.switch[aria-checked='true']::after {
+  background: var(--on-accent);
+  transform: translateX(20px);
+}
+
+.switch:focus-visible {
+  outline: 2px solid var(--gold-light);
+  outline-offset: 2px;
+}
+
+/* ───────────────────────── Напоминания в форме турнира ───────────────────────── */
+
+.remind-custom {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.remind-custom .input {
+  flex: 1;
+  min-width: 0;
+}
+
+.remind-custom .select {
+  flex: none;
+  width: auto;
+}
+
+.remind-custom .btn {
+  flex: none;
+  white-space: nowrap;
+}
+
+.pick__x {
+  margin-left: 6px;
+  opacity: 0.7;
+}
+
+/* Подсказка у админского действия, которое пока недоступно по времени (одна строка). */
+.action-hint {
+  overflow: hidden;
+  color: var(--hint);
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }

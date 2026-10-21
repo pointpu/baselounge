@@ -90,3 +90,20 @@ export function formatDateTime(iso: string, tz: string): string {
     minute: '2-digit',
   }).format(new Date(iso));
 }
+
+/**
+ * Форматирование для текстов ошибок правил (`TimeFormat` из shared/rules.ts) в поясе клуба:
+ * время «19:00», день «24 октября» — только если момент не сегодня.
+ */
+export function clubTimeFormat(tz: string, now: Date = new Date()): { time(iso: string): string; day(iso: string): string | null } {
+  const timeFmt = new Intl.DateTimeFormat('ru-RU', { timeZone: tz, hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
+  const dayFmt = new Intl.DateTimeFormat('ru-RU', { timeZone: tz, day: 'numeric', month: 'long' });
+  const today = dayFmt.format(now);
+  return {
+    time: (iso) => timeFmt.format(new Date(iso)),
+    day: (iso) => {
+      const d = dayFmt.format(new Date(iso));
+      return d === today ? null : d;
+    },
+  };
+}

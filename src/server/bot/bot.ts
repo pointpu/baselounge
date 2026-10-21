@@ -7,15 +7,17 @@ import { setNotifier } from '../services/notifier.ts';
 import { registerHandlers } from './handlers.ts';
 import { TelegramNotifier, webAppEnabled } from './notifier.ts';
 import { startReminders } from './reminders.ts';
-import { commands } from './texts.ts';
+import { botDescription, botShortDescription, commands } from './texts.ts';
 
 export interface RunningBot {
   stop(): Promise<void>;
 }
 
-/** Команды и кнопка меню «Клуб» (web_app) — один раз при старте. */
+/** Команды, описание и кнопка меню «Клуб» (web_app) — один раз при старте. */
 async function configureBot(bot: Bot): Promise<void> {
   await bot.api.setMyCommands(commands);
+  await bot.api.setMyShortDescription(botShortDescription());
+  await bot.api.setMyDescription(botDescription());
   if (webAppEnabled) {
     await bot.api.setChatMenuButton({ menu_button: { type: 'web_app', text: 'Клуб', web_app: { url: config.webappUrl } } });
   } else {
@@ -37,12 +39,12 @@ export async function startBot(token: string): Promise<RunningBot> {
   await bot.init();
   await configureBot(bot).catch((err: unknown) => console.error('[bot] не удалось настроить команды/меню:', err));
 
-  setNotifier(new TelegramNotifier(bot.api));
+  setNotifier(new TelegramNotifier(bot.api, bot.botInfo.username));
   const stopReminders = startReminders();
 
   void bot
     .start({
-      allowed_updates: ['message', 'callback_query'],
+      allowed_updates: ['message', 'callback_query', 'my_chat_member'],
       onStart: (me) => console.log(`[bot] @${me.username} запущен (long polling)`),
     })
     .catch((err: unknown) => console.error('[bot] polling остановлен с ошибкой:', err));

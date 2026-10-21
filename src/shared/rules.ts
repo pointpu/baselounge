@@ -110,6 +110,168 @@ export function scheduleError(s: ScheduleInput): string | null {
   return null;
 }
 
+// ───────────────────────────── Время: регистрация, старт, рассадка, итоги ─────────────────────────────
+
+/** Запустить турнир (статус «идёт» / часы) можно не раньше чем за столько минут до старта. */
+export const EARLY_START_MIN = 60;
+/** Рассадка — не раньше чем за столько минут до старта (не рассаживаем за несколько дней). */
+export const EARLY_SEATING_MIN = 180;
+
+/** Что нужно правилам времени; `TournamentDetail`/`TournamentCard` подходят как есть. */
+export interface TimingInput {
+  status: TournamentStatus;
+  startsAt: string;
+  lateRegUntil: string | null;
+}
+
+/** Форматирование времени в поясе клуба для текстов ошибок. */
+export interface TimeFormat {
+  /** «19:00». */
+  time(iso: string): string;
+  /** «24 октября» — если момент не сегодня по часам клуба, иначе null. */
+  day(iso: string): string | null;
+}
+
+/** «в 19:00» или «24 октября в 19:00». */
+function atWhen(iso: string, fmt: TimeFormat): string {
+  const day = fmt.day(iso);
+  return `${day ? `${day} ` : ''}в ${fmt.time(iso)}`;
+}
+
+/**
+ * Открыта ли запись: статус «регистрация» и старт ещё не наступил, либо (регистрация или турнир
+ * идёт) и не закончилась поздняя регистрация. После закрытия записи лист ожидания «замораживается»:
+ * из него никого не повышают (см. DESIGN.md).
+ */
+export function registrationOpen(t: TimingInput, nowMs: number): boolean {
+  const start = Date.parse(t.startsAt);
+  if (t.status === 'registration' && nowMs < start) return true;
+  const late = t.lateRegUntil ? Date.parse(t.lateRegUntil) : null;
+  return (t.status === 'registration' || t.status === 'running') && late !== null && nowMs < late;
+}
+
+/** Почему записаться нельзя (текст для 409) или null, если запись открыта. */
+export function registrationClosedReason(t: TimingInput, nowMs: number): string | null {
+  if (registrationOpen(t, nowMs)) return null;
+  if (t.status === 'draft') return 'Регистрация на этот турнир ещё не открыта';
+  if (t.status === 'completed' || t.status === 'cancelled') return 'Регистрация на этот турнир закрыта';
+  if (t.lateRegUntil !== null) return 'Поздняя регистрация уже закрыта';
+  return 'Регистрация закрыта — турнир уже начался';
+}
+
+/** Рано запускать турнир/часы: текст 409 или null. */
+export function earlyStartError(startsAt: string, nowMs: number, fmt: TimeFormat): string | null {
+  const from = Date.parse(startsAt) - EARLY_START_MIN * MINUTE_MS;
+  if (nowMs >= from) return null;
+  const fromIso = new Date(from).toISOString();
+  return `Рано: турнир начинается ${atWhen(startsAt, fmt)} — запустить можно с ${fmt.time(fromIso)}`;
+}
+
+/** Рано рассаживать: текст 409 или null. */
+export function earlySeatingError(startsAt: string, nowMs: number, fmt: TimeFormat): string | null {
+  const from = Date.parse(startsAt) - EARLY_SEATING_MIN * MINUTE_MS;
+  if (nowMs >= from) return null;
+  const fromIso = new Date(from).toISOString();
+  return `Рано для рассадки: она доступна за ${EARLY_SEATING_MIN / 60} ч до старта — ${atWhen(fromIso, fmt)}`;
+}
+
+/**
+ * Можно ли вносить результаты: турнир идёт (или уже завершён — исправление) и старт наступил.
+ * Текст 409 или null.
+ */
+export function resultsTimeError(t: TimingInput, nowMs: number, fmt: TimeFormat): string | null {
+  if (t.status !== 'running' && t.status !== 'completed') {
+    return t.status === 'registration'
+      ? 'Результаты вносятся после начала турнира — сначала запустите его'
+      : 'Результаты можно внести только у идущего или завершённого турнира';
+  }
+  if (nowMs < Date.parse(t.startsAt)) return `Результаты — не раньше старта турнира (${atWhen(t.startsAt, fmt)})`;
+  return null;
+}
+
+// ───────────────────────────── Стеки и вместимость ─────────────────────────────
+
+export interface StackInput {
+  startingStack: number | null;
+  levels: readonly BlindLevel[];
+  reentries: readonly Bullet[];
+  addons: readonly Bullet[];
+}
+
+/** Стартовый стек больше BB первого уровня, стеки ре-энтри и add-on положительные. Текст 400 или null. */
+export function stackError(s: StackInput): string | null {
+  const first = firstPlayable(s.levels);
+  if (s.startingStack !== null) {
+    if (!Number.isInteger(s.startingStack) || s.startingStack <= 0) return 'Стартовый стек должен быть больше нуля';
+    if (first && first.bb > 0 && s.startingStack <= first.bb) {
+      return `Стартовый стек (${s.startingStack}) должен быть больше большого блайнда первого уровня (${first.bb})`;
+    }
+  }
+  const bad = (list: readonly Bullet[]): number => list.findIndex((b) => !Number.isInteger(b.stack) || b.stack <= 0);
+  const re = bad(s.reentries);
+  if (re >= 0) return `Ре-энтри ${re + 1}: стек должен быть больше нуля`;
+  const ad = bad(s.addons);
+  if (ad >= 0) return `Add-on ${ad + 1}: стек должен быть больше нуля`;
+  return null;
+}
+
+/** Вместимость нельзя опустить ниже числа уже записанных. Текст 409 или null. */
+export function capacityError(capacity: number, registered: number): string | null {
+  if (capacity >= registered) return null;
+  return `Нельзя уменьшить до ${capacity} ${ruPlural(capacity, 'места', 'мест', 'мест')}: уже записано ${registered} — сначала отмените лишние записи`;
+}
+
+// ───────────────────────────── Напоминания ─────────────────────────────
+
+/** Напоминания по умолчанию: за 1 день и за 2 часа. */
+export const DEFAULT_REMINDER_OFFSETS: readonly number[] = [1440, 120];
+/** Не больше стольких напоминаний у турнира. */
+export const MAX_REMINDERS = 5;
+/** Самое раннее напоминание — за 7 дней. */
+export const MAX_REMINDER_MIN = 7 * 24 * 60;
+/**
+ * Если окно напоминания открылось больше стольких минут назад (сервер был выключен, старт перенесли),
+ * напоминание не шлём — только отмечаем, чтобы не засыпать игроков пачкой устаревших сообщений.
+ */
+export const REMINDER_GRACE_MIN = 30;
+
+/** Быстрые варианты в форме турнира. */
+export const REMINDER_PRESETS: ReadonlyArray<{ minutes: number; label: string }> = [
+  { minutes: 1440, label: 'за 1 день' },
+  { minutes: 180, label: 'за 3 ч' },
+  { minutes: 120, label: 'за 2 ч' },
+  { minutes: 60, label: 'за 1 ч' },
+  { minutes: 30, label: 'за 30 мин' },
+  { minutes: 15, label: 'за 15 мин' },
+];
+
+/** «за 1 день», «за 2 дн 3 ч», «за 1 ч 30 мин», «за 45 мин». */
+export function reminderLabel(minutes: number): string {
+  const preset = REMINDER_PRESETS.find((p) => p.minutes === minutes);
+  if (preset) return preset.label;
+  if (minutes % 1440 === 0) {
+    const d = minutes / 1440;
+    return `за ${d} ${ruPlural(d, 'день', 'дня', 'дней')}`;
+  }
+  return `за ${shortDuration(minutes)}`;
+}
+
+/** Список напоминаний корректен: каждое > 0 и ≤ 7 дней, без повторов, не больше 5. Текст 400 или null. */
+export function reminderOffsetsError(offsets: readonly number[]): string | null {
+  if (offsets.length > MAX_REMINDERS) return `Напоминаний — не больше ${MAX_REMINDERS}`;
+  for (const m of offsets) {
+    if (!Number.isInteger(m) || m <= 0) return 'Напоминание — целое число минут больше нуля';
+    if (m > MAX_REMINDER_MIN) return 'Напоминание — не раньше чем за 7 дней до старта';
+  }
+  if (new Set(offsets).size !== offsets.length) return 'Напоминания повторяются — уберите одинаковые';
+  return null;
+}
+
+/** Сортировка «сначала самое раннее» (1440, 120, 30). */
+export function sortOffsets(offsets: readonly number[]): number[] {
+  return [...offsets].sort((a, b) => b - a);
+}
+
 // ───────────────────────────── Игра и формат ─────────────────────────────
 
 export const GAME_TYPES: readonly GameType[] = ['nlh', 'plh', 'flh'];

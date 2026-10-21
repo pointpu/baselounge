@@ -24,6 +24,12 @@ export interface PlayerRow {
   phone: string | null;
   phone_verified: boolean;
   created_at: string;
+  /** Подписка на анонсы новых турниров (migration 004). */
+  notify_announcements: boolean;
+  /** Подписка на напоминания о своих турнирах (migration 004). */
+  notify_reminders: boolean;
+  /** Когда Telegram ответил «бот заблокирован» (403); null — можно писать. */
+  bot_blocked_at: string | null;
 }
 
 export interface TournamentRow {
@@ -55,6 +61,10 @@ export interface TournamentRow {
   clock_paused_total: number;
   results_published_at: string | null;
   created_at: string;
+  /** Напоминания: минуты до старта (migration 004). */
+  reminder_offsets: number[];
+  /** Когда разослан анонс (одна рассылка за жизнь турнира); null — не рассылался. */
+  announced_at: string | null;
 }
 
 export interface RegistrationRow {
@@ -66,8 +76,6 @@ export interface RegistrationRow {
   updated_at: string;
   table_no: number | null;
   seat_no: number | null;
-  reminded_24h: boolean;
-  reminded_2h: boolean;
 }
 
 export interface ResultRowDb {
@@ -208,6 +216,46 @@ export async function setAvatarFile(playerId: number, file: string | null): Prom
   await db()`UPDATE players SET avatar_file = ${file} WHERE id = ${playerId}`;
 }
 
+/** Подписки на уведомления игрока. */
+export interface NotifyPrefsRow {
+  announcements: boolean;
+  reminders: boolean;
+}
+
+/** Telegram ответил 403 (бот заблокирован / аккаунт удалён) — больше не пишем до следующего /start. */
+export async function markBotBlocked(tgId: number): Promise<void> {
+  await db()`UPDATE players SET bot_blocked_at = now() WHERE tg_id = ${tgId} AND bot_blocked_at IS NULL`;
+}
+
+/** Игрок снова общается с ботом (/start и т.п.) — снимаем отметку о блокировке. */
+export async function clearBotBlocked(tgId: number): Promise<void> {
+  await db()`UPDATE players SET bot_blocked_at = NULL WHERE tg_id = ${tgId} AND bot_blocked_at IS NOT NULL`;
+}
+
+export async function getNotifyPrefs(tgId: number): Promise<NotifyPrefsRow> {
+  const [row] = await db()<NotifyPrefsRow[]>`
+    SELECT notify_announcements AS announcements, notify_reminders AS reminders FROM players WHERE tg_id = ${tgId}`;
+  return row ?? { announcements: true, reminders: true };
+}
+
+/** Меняет только переданные подписки и возвращает итоговые. */
+export async function setNotifyPrefs(tgId: number, prefs: { announcements?: boolean; reminders?: boolean }): Promise<NotifyPrefsRow> {
+  const [row] = await db()<NotifyPrefsRow[]>`
+    UPDATE players SET
+      notify_announcements = coalesce(${prefs.announcements ?? null}::boolean, notify_announcements),
+      notify_reminders = coalesce(${prefs.reminders ?? null}::boolean, notify_reminders)
+    WHERE tg_id = ${tgId}
+    RETURNING notify_announcements AS announcements, notify_reminders AS reminders`;
+  return row ?? { announcements: true, reminders: true };
+}
+
+/** Получатели анонсов: подписаны и не заблокировали бота. По id — стабильный порядок. */
+export async function listAnnouncementRecipients(): Promise<number[]> {
+  const rows = await db()<{ tg_id: number }[]>`
+    SELECT tg_id FROM players WHERE notify_announcements AND bot_blocked_at IS NULL ORDER BY id`;
+  return rows.map((r) => r.tg_id);
+}
+
 export async function setVerifiedPhone(tgId: number, phone: string): Promise<void> {
   await db()`UPDATE players SET phone = ${phone}, phone_verified = true WHERE tg_id = ${tgId}`;
 }
@@ -269,15 +317,20 @@ export interface TournamentFields {
   reentries: Bullet[];
   addons: Bullet[];
   blind_levels: BlindLevel[];
+  /** Минуты до старта. */
+  reminder_offsets: number[];
 }
+
+/** integer[]-параметр (тип указан явно, чтобы и пустой массив передавался корректно). */
+const intArray = (value: readonly number[]): postgres.Parameter => db().array([...value], 23) as unknown as postgres.Parameter;
 
 export async function insertTournament(f: TournamentFields): Promise<number> {
   const [row] = await db()<{ id: number }[]>`
     INSERT INTO tournaments (title, subtitle, description, game, starts_at, late_reg_until, status, capacity, buy_in,
-      starting_stack, knockout_points, table_size, dealer, reentries, addons, blind_levels, created_at)
+      starting_stack, knockout_points, table_size, dealer, reentries, addons, blind_levels, reminder_offsets, created_at)
     VALUES (${f.title}, ${f.subtitle}, ${f.description}, ${f.game}, ${f.starts_at}, ${f.late_reg_until}, ${f.status}, ${f.capacity},
       ${f.buy_in}, ${f.starting_stack}, ${f.knockout_points}, ${f.table_size}, ${f.dealer},
-      ${jsonb(f.reentries)}, ${jsonb(f.addons)}, ${jsonb(f.blind_levels)}, ${nowIso()})
+      ${jsonb(f.reentries)}, ${jsonb(f.addons)}, ${jsonb(f.blind_levels)}, ${intArray(f.reminder_offsets)}, ${nowIso()})
     RETURNING id`;
   return row!.id;
 }
@@ -289,7 +342,7 @@ export async function updateTournamentFields(id: number, f: TournamentFields): P
       late_reg_until = ${f.late_reg_until}, status = ${f.status}, capacity = ${f.capacity}, buy_in = ${f.buy_in},
       starting_stack = ${f.starting_stack}, knockout_points = ${f.knockout_points}, table_size = ${f.table_size},
       dealer = ${f.dealer}, reentries = ${jsonb(f.reentries)}, addons = ${jsonb(f.addons)},
-      blind_levels = ${jsonb(f.blind_levels)}
+      blind_levels = ${jsonb(f.blind_levels)}, reminder_offsets = ${intArray(f.reminder_offsets)}
     WHERE id = ${id}`;
 }
 
@@ -305,6 +358,18 @@ export async function setClock(id: number, startedAt: string | null, pausedAt: s
   await db()`
     UPDATE tournaments SET clock_started_at = ${startedAt}, clock_paused_at = ${pausedAt}, clock_paused_total = ${pausedTotalSec}
     WHERE id = ${id}`;
+}
+
+/**
+ * «Забирает» право разослать анонс: ставит announced_at, только если анонса ещё не было, турнир
+ * открыт для записи и старт впереди. Возвращает турнир, если анонс нужно отправить (ровно один раз за жизнь турнира).
+ */
+export async function claimAnnouncement(id: number): Promise<TournamentRow | undefined> {
+  const [row] = await db()<TournamentRow[]>`
+    UPDATE tournaments SET announced_at = now()
+    WHERE id = ${id} AND announced_at IS NULL AND status = 'registration' AND starts_at > now()
+    RETURNING *`;
+  return row && normalizeTournament(row);
 }
 
 export async function markResultsPublished(id: number, at: string): Promise<void> {
@@ -369,23 +434,19 @@ export async function waitlistPosition(reg: RegistrationRow): Promise<number | n
 }
 
 /**
- * Создаёт или переиспользует регистрацию (после отмены — та же строка).
- * Место за столом и флаги напоминаний сбрасываются (флаги можно сразу выставить).
+ * Создаёт или переиспользует регистрацию (после отмены — та же строка); место за столом сбрасывается.
+ * Возвращает id регистрации. Уже отправленные напоминания (reminder_deliveries) сохраняются — повторно не уйдут.
  */
-export async function upsertRegistration(
-  tournamentId: number,
-  playerId: number,
-  status: RegistrationStatus,
-  reminded: { h24: boolean; h2: boolean },
-): Promise<void> {
+export async function upsertRegistration(tournamentId: number, playerId: number, status: RegistrationStatus): Promise<number> {
   const now = nowIso();
-  await db()`
-    INSERT INTO registrations (tournament_id, player_id, status, created_at, updated_at, reminded_24h, reminded_2h)
-    VALUES (${tournamentId}, ${playerId}, ${status}, ${now}, ${now}, ${reminded.h24}, ${reminded.h2})
+  const [row] = await db()<{ id: number }[]>`
+    INSERT INTO registrations (tournament_id, player_id, status, created_at, updated_at)
+    VALUES (${tournamentId}, ${playerId}, ${status}, ${now}, ${now})
     ON CONFLICT (tournament_id, player_id) DO UPDATE SET
       status = excluded.status, updated_at = excluded.updated_at, created_at = excluded.created_at,
-      table_no = NULL, seat_no = NULL,
-      reminded_24h = excluded.reminded_24h, reminded_2h = excluded.reminded_2h`;
+      table_no = NULL, seat_no = NULL
+    RETURNING id`;
+  return row!.id;
 }
 
 export async function setRegistrationStatus(id: number, status: RegistrationStatus): Promise<void> {
@@ -399,9 +460,9 @@ export async function setRegistrationStatus(id: number, status: RegistrationStat
  * Возвращает Telegram ID повышенных — для уведомлений после коммита.
  * Вызывать внутри транзакции, взявшей `lockTournament()`.
  */
-export async function promoteWaitlist(tournamentId: number, limit: number): Promise<number[]> {
+export async function promoteWaitlist(tournamentId: number, limit: number): Promise<Array<{ id: number; tg_id: number }>> {
   if (limit <= 0) return [];
-  const rows = await db()<{ tg_id: number }[]>`
+  return db()<Array<{ id: number; tg_id: number }>>`
     WITH next AS (
       SELECT id FROM registrations
       WHERE tournament_id = ${tournamentId} AND status = 'waitlist'
@@ -412,8 +473,7 @@ export async function promoteWaitlist(tournamentId: number, limit: number): Prom
     SET status = 'registered', updated_at = ${nowIso()}, table_no = NULL, seat_no = NULL
     FROM next, players p
     WHERE r.id = next.id AND p.id = r.player_id
-    RETURNING p.tg_id`;
-  return rows.map((r) => r.tg_id);
+    RETURNING r.id, p.tg_id`;
 }
 
 export async function setSeat(id: number, table: number | null, seat: number | null): Promise<void> {
@@ -425,47 +485,90 @@ export async function setSeat(id: number, table: number | null, seat: number | n
 export interface ClaimedReminder {
   tg_id: number;
   tournament_id: number;
+  offset_min: number;
+  /** true — окно давно прошло (или есть более свежее напоминание): учтено, но не отправляется. */
+  skipped: boolean;
 }
 
 /**
- * Атомарно «забирает» напоминания, которые пора отправить, и сразу ставит флаг —
- * один UPDATE … RETURNING: даже два процесса не отправят одно напоминание дважды.
- *  - `2h`: старт в (now, now+2ч] — ставим оба флага (суточное уже неактуально);
- *  - `24h`: старт в (now+2ч, now+24ч] и суточное ещё не отправлено.
+ * Атомарно «забирает» напоминания, которые пора отправить: для каждой записи `registered` на турнир
+ * `registration` (запущенному досрочно турниру «Через 25 минут!» не шлём) и каждого сдвига из `reminder_offsets`, у которого окно открылось
+ * (now ≥ старт − сдвиг) и старт ещё не наступил, вставляет строку reminder_deliveries.
+ * `INSERT … ON CONFLICT DO NOTHING RETURNING` по первичному ключу (registration_id, offset_min):
+ * даже два процесса не заберут одно напоминание дважды, перезапуск его не повторит.
+ *
+ * Не шлём (skipped = true): окно открылось больше `graceMin` минут назад (простой, перенос старта),
+ * а также более ранние сдвиги, если у той же записи одновременно «созрел» более поздний (60 вместо 120).
+ * Игроки без подписки на напоминания и заблокировавшие бота не выбираются вовсе.
+ * Строки registrations не меняются и не блокируются — с рассадкой взаимных блокировок нет.
  */
-export async function claimDueReminders(kind: '24h' | '2h', now: string, in2h: string, in24h: string): Promise<ClaimedReminder[]> {
-  const q = db();
-  // Сначала блокируем подходящие строки в порядке id (как и рассадка), затем ставим флаги —
-  // единый порядок захвата блокировок исключает взаимную блокировку (deadlock) с рассадкой.
-  // `NOT reminded_…` перепроверяется после ожидания блокировки, поэтому дублей нет.
-  if (kind === '2h') {
-    return q<ClaimedReminder[]>`
-      WITH due AS (
-        SELECT r.id FROM registrations r JOIN tournaments t ON t.id = r.tournament_id
-        WHERE r.status = 'registered' AND t.status IN ('registration', 'running')
-          AND t.starts_at > ${now} AND t.starts_at <= ${in2h}
-          AND NOT r.reminded_2h
-        ORDER BY r.id
-        FOR UPDATE OF r
-      )
-      UPDATE registrations r SET reminded_2h = true, reminded_24h = true
-      FROM due, players p
-      WHERE r.id = due.id AND p.id = r.player_id
-      RETURNING p.tg_id, r.tournament_id`;
-  }
-  return q<ClaimedReminder[]>`
-    WITH due AS (
-      SELECT r.id FROM registrations r JOIN tournaments t ON t.id = r.tournament_id
-      WHERE r.status = 'registered' AND t.status IN ('registration', 'running')
-        AND t.starts_at > ${in2h} AND t.starts_at <= ${in24h}
-        AND NOT r.reminded_24h
-      ORDER BY r.id
-      FOR UPDATE OF r
+export async function claimDueReminders(now: string, graceMin: number): Promise<ClaimedReminder[]> {
+  return db()<ClaimedReminder[]>`
+    WITH candidates AS (
+      SELECT r.id AS registration_id, o.offset_min, p.tg_id, t.id AS tournament_id,
+             ${now}::timestamptz > t.starts_at - make_interval(mins => o.offset_min - ${graceMin}::int) AS stale
+      FROM registrations r
+      JOIN tournaments t ON t.id = r.tournament_id
+      JOIN players p ON p.id = r.player_id
+      CROSS JOIN LATERAL unnest(t.reminder_offsets) AS o(offset_min)
+      WHERE r.status = 'registered' AND t.status = 'registration'
+        AND p.notify_reminders AND p.bot_blocked_at IS NULL
+        AND t.starts_at > ${now}::timestamptz
+        AND t.starts_at - make_interval(mins => o.offset_min) <= ${now}::timestamptz
+        AND NOT EXISTS (
+          SELECT 1 FROM reminder_deliveries d WHERE d.registration_id = r.id AND d.offset_min = o.offset_min
+        )
+    ),
+    due AS (
+      SELECT c.*, (c.stale OR c.offset_min > min(c.offset_min) OVER (PARTITION BY c.registration_id)) AS skip
+      FROM candidates c
+    ),
+    ins AS (
+      INSERT INTO reminder_deliveries (registration_id, offset_min, skipped, sent_at)
+      SELECT registration_id, offset_min, skip, ${now}::timestamptz FROM due
+      ON CONFLICT DO NOTHING
+      RETURNING registration_id, offset_min, skipped
     )
-    UPDATE registrations r SET reminded_24h = true
-    FROM due, players p
-    WHERE r.id = due.id AND p.id = r.player_id
-    RETURNING p.tg_id, r.tournament_id`;
+    SELECT due.tg_id, due.tournament_id, ins.offset_min, ins.skipped
+    FROM ins JOIN due ON due.registration_id = ins.registration_id AND due.offset_min = ins.offset_min
+    ORDER BY due.tournament_id, ins.offset_min`;
+}
+
+/**
+ * Отмечает как пропущенные напоминания, чьё окно уже открылось, — для только что записанных
+ * (или повышенных из очереди): им пришло сообщение о записи, «за 2 ч» сразу следом не нужно.
+ */
+export async function skipStartedReminders(registrationIds: readonly number[], now: string): Promise<void> {
+  if (registrationIds.length === 0) return;
+  const q = db();
+  await q`
+    INSERT INTO reminder_deliveries (registration_id, offset_min, skipped, sent_at)
+    SELECT r.id, o.offset_min, true, ${now}::timestamptz
+    FROM registrations r
+    JOIN tournaments t ON t.id = r.tournament_id
+    CROSS JOIN LATERAL unnest(t.reminder_offsets) AS o(offset_min)
+    WHERE r.id IN ${q([...registrationIds])}
+      AND t.starts_at - make_interval(mins => o.offset_min) <= ${now}::timestamptz
+    ON CONFLICT DO NOTHING`;
+}
+
+/** Отмечает все напоминания турнира как пропущенные (демо-данные: не писать сид-игрокам). */
+export async function skipAllReminders(tournamentId: number): Promise<void> {
+  await db()`
+    INSERT INTO reminder_deliveries (registration_id, offset_min, skipped)
+    SELECT r.id, o.offset_min, true
+    FROM registrations r
+    JOIN tournaments t ON t.id = r.tournament_id
+    CROSS JOIN LATERAL unnest(t.reminder_offsets) AS o(offset_min)
+    WHERE t.id = ${tournamentId}
+    ON CONFLICT DO NOTHING`;
+}
+
+/** Старт перенесли — забываем отправленные напоминания турнира, чтобы они пришли к новому времени. */
+export async function resetReminders(tournamentId: number): Promise<void> {
+  await db()`
+    DELETE FROM reminder_deliveries d USING registrations r
+    WHERE d.registration_id = r.id AND r.tournament_id = ${tournamentId}`;
 }
 
 // ───────────────────────────── Результаты ─────────────────────────────

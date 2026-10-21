@@ -1,7 +1,7 @@
 /**
  * Профиль игрока: DTO `Me`, смена никнейма и аватара.
  */
-import type { Me } from '../../shared/types.ts';
+import type { Me, MePatch } from '../../shared/types.ts';
 import { config } from '../config.ts';
 import { tx } from '../db.ts';
 import { badRequest, HttpError } from '../http.ts';
@@ -46,12 +46,21 @@ export function buildMe(player: PlayerRow, isAdmin: boolean): Me {
     },
     isAdmin,
     club: { name: config.clubName, city: config.clubCity, tz: config.clubTz },
+    notify: { announcements: player.notify_announcements, reminders: player.notify_reminders },
   };
 }
 
-/** Никнейм: null/пустая строка — сбросить на имя из Telegram. Проверка длины — в схеме роута. */
-export async function updateNickname(player: PlayerRow, nickname: string | null): Promise<PlayerRow> {
-  await repo.setNickname(player.id, nickname && nickname.length > 0 ? nickname : null);
+/**
+ * PATCH /api/me: никнейм (null/пустая строка — сбросить на имя из Telegram; длина проверена схемой
+ * роута) и подписки на уведомления. Меняются только переданные поля.
+ */
+export async function updateMe(player: PlayerRow, patch: MePatch): Promise<PlayerRow> {
+  await tx(async () => {
+    if (patch.nickname !== undefined) await repo.setNickname(player.id, patch.nickname && patch.nickname.length > 0 ? patch.nickname : null);
+    if (patch.notifyAnnouncements !== undefined || patch.notifyReminders !== undefined) {
+      await repo.setNotifyPrefs(player.tg_id, { announcements: patch.notifyAnnouncements, reminders: patch.notifyReminders });
+    }
+  });
   return (await repo.findPlayerById(player.id))!;
 }
 
