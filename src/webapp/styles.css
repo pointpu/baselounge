@@ -2169,26 +2169,6 @@ input[type='number'] {
   gap: var(--space-2);
 }
 
-.editor__presets {
-  display: grid;
-  /* Три равные кнопки: «Турбо · Стандарт · BB-анте» — в одну строку даже на 320 px. */
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: var(--space-2);
-}
-
-.editor__presets > .field__label,
-.editor__presets > .editor__presets-hint {
-  grid-column: 1 / -1;
-}
-
-.editor__presets > .btn {
-  min-width: 0;
-  padding: 0 var(--space-2);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 /* Выбор даты и времени старта: дни мини-календарём, частое время — кнопками. */
 .pick-row {
   display: flex;

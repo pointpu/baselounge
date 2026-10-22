@@ -191,11 +191,6 @@ function preset(minutes: number, breakEvery: number, breakMin: number): BlindLev
   return levels;
 }
 
-const PRESETS = [
-  { label: 'Турбо', build: () => preset(10, 6, 5) },
-  { label: 'Стандарт', build: () => preset(20, 4, 10) },
-] as const;
-
 /** Округление до «красивых» значений блайндов. */
 function niceRound(n: number): number {
   const step = n >= 10_000 ? 1000 : n >= 1000 ? 100 : n >= 100 ? 25 : 5;
@@ -418,64 +413,6 @@ function blindLevelsEditor(initial: readonly BlindLevel[], options: LevelsEditor
     row.el.querySelector<HTMLInputElement>('input')?.focus();
   };
 
-  const presetButtons = PRESETS.map((p) =>
-    h(
-      'button',
-      {
-        type: 'button',
-        class: 'btn btn--soft btn--sm',
-        on: {
-          click: async () => {
-            if (rows.length && !(await confirmDialog(`Заменить текущую структуру пресетом «${p.label}»?`))) return;
-            setAll(p.build());
-            haptic.select();
-          },
-        },
-      },
-      p.label,
-    ),
-  );
-
-  /**
-   * «BB-анте» — не замена структуры, а правка текущей: с выбранного уровня анте = большому блайнду,
-   * до него — без анте (типичная современная структура NLH). Пустую структуру сначала заполняем стандартной.
-   */
-  const applyBbAnte = (): void => {
-    if (!rows.length) setAll(preset(20, 4, 10));
-    const playable = rows.filter((r) => !r.isBreak);
-    const firstAnte = playable.findIndex((r) => (intOf(r.ante) ?? 0) > 0);
-    const select = h(
-      'select',
-      { class: 'input select', ariaLabel: 'С какого уровня BB-анте' },
-      playable.map((r, i) =>
-        h('option', { value: String(i + 1), selected: i === Math.max(0, firstAnte) }, `Уровень ${i + 1} · ${r.sb.value || '?'}/${r.bb.value || '?'}`),
-      ),
-    );
-    openSheet({
-      title: 'BB-анте',
-      submitLabel: 'Применить',
-      content: h(
-        'div',
-        { class: 'stack' },
-        h('p', { class: 'muted' }, 'Анте за весь стол платит большой блайнд, суммой в один BB. До выбранного уровня анте не будет.'),
-        h('div', { class: 'field' }, h('span', { class: 'field__label' }, 'С уровня'), select),
-      ),
-      onSubmit: () => {
-        const from = Number(select.value);
-        let n = 0;
-        for (const row of rows) {
-          if (row.isBreak) continue;
-          n += 1;
-          row.ante.value = n >= from ? row.bb.value : '0';
-        }
-        renumber();
-        haptic.success();
-        toast(`BB-анте с уровня ${from}`, 'success');
-      },
-    });
-  };
-  presetButtons.push(h('button', { type: 'button', class: 'btn btn--soft btn--sm', on: { click: applyBbAnte } }, 'BB-анте'));
-
   /* Шаблоны: строка сохранённых структур (★ — базовый) и «Сохранить как шаблон». */
   const templateRow = h('div', { class: 'pick-row editor__templates-row' });
   const templateHint = h('p', { class: 'field__hint' }, 'Сохраните структуру, чтобы применять её в один тап.');
@@ -531,13 +468,6 @@ function blindLevelsEditor(initial: readonly BlindLevel[], options: LevelsEditor
   const el = h(
     'div',
     { class: 'editor' },
-    h(
-      'div',
-      { class: 'editor__presets' },
-      h('span', { class: 'field__label' }, 'Пресеты'),
-      presetButtons,
-      h('p', { class: 'field__hint editor__presets-hint' }, 'Турбо — по 10 мин, Стандарт — по 20 мин, BB‑анте — анте = BB с выбранного уровня.'),
-    ),
     h(
       'div',
       { class: 'editor__templates' },
@@ -1410,7 +1340,7 @@ function renameTemplate(t: BlindTemplate, onDone: () => void): void {
 async function newScreen(root: HTMLElement): Promise<Cleanup | void> {
   const heading = h('h1', { class: 'page-title' }, 'Новый турнир');
   setChildren(root, heading, skeleton(3, 120));
-  // Базовый шаблон — начальная структура; без него (или если список не загрузился) — пресет «Стандарт».
+  // Базовый шаблон — начальная структура; без него (или если список не загрузился) — встроенная стандартная.
   const templates = await loadTemplates(true).catch((): BlindTemplate[] => []);
   if (!root.isConnected) return;
   const base = templates.find((t) => t.isDefault) ?? null;
