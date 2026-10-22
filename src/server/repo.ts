@@ -620,3 +620,85 @@ export async function playerHistory(playerId: number): Promise<HistoryDbRow[]> {
     FROM results r JOIN tournaments t ON t.id = r.tournament_id
     WHERE r.player_id = ${playerId} ORDER BY t.starts_at DESC, t.id DESC`;
 }
+
+// ───────────────────────────── Шаблоны структуры блайндов ─────────────────────────────
+
+export interface BlindTemplateRow {
+  id: number;
+  name: string;
+  /** jsonb: структура блайндов. */
+  levels: BlindLevel[];
+  starting_stack: number | null;
+  is_default: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+function normalizeTemplate(row: BlindTemplateRow): BlindTemplateRow {
+  row.levels = orderKeys(row.levels, BLIND_LEVEL_KEYS);
+  return row;
+}
+
+/**
+ * Сериализует изменения шаблонов до конца транзакции (проверки «имя занято», «не больше 50»
+ * и смена базового шаблона идут строго по очереди). Вызывать только внутри `tx()`.
+ */
+export async function lockBlindTemplates(): Promise<void> {
+  await db()`SELECT pg_advisory_xact_lock(hashtext('blind_templates'))`;
+}
+
+/** Все шаблоны: сначала базовый, затем по имени. */
+export async function listBlindTemplates(): Promise<BlindTemplateRow[]> {
+  const rows = await db()<BlindTemplateRow[]>`
+    SELECT * FROM blind_templates ORDER BY is_default DESC, lower(name), id`;
+  return rows.map(normalizeTemplate);
+}
+
+export async function findBlindTemplate(id: number): Promise<BlindTemplateRow | undefined> {
+  const [row] = await db()<BlindTemplateRow[]>`SELECT * FROM blind_templates WHERE id = ${id}`;
+  return row && normalizeTemplate(row);
+}
+
+export async function findBlindTemplateByName(name: string): Promise<BlindTemplateRow | undefined> {
+  const [row] = await db()<BlindTemplateRow[]>`SELECT * FROM blind_templates WHERE lower(name) = lower(${name})`;
+  return row && normalizeTemplate(row);
+}
+
+export async function countBlindTemplates(): Promise<number> {
+  const [row] = await db()<{ n: number }[]>`SELECT count(*) AS n FROM blind_templates`;
+  return row?.n ?? 0;
+}
+
+export interface BlindTemplateFields {
+  name: string;
+  levels: BlindLevel[];
+  starting_stack: number | null;
+  is_default: boolean;
+}
+
+export async function insertBlindTemplate(f: BlindTemplateFields): Promise<number> {
+  const [row] = await db()<{ id: number }[]>`
+    INSERT INTO blind_templates (name, levels, starting_stack, is_default)
+    VALUES (${f.name}, ${jsonb(f.levels)}, ${f.starting_stack}, ${f.is_default})
+    RETURNING id`;
+  return row!.id;
+}
+
+export async function updateBlindTemplate(id: number, f: BlindTemplateFields): Promise<void> {
+  await db()`
+    UPDATE blind_templates SET name = ${f.name}, levels = ${jsonb(f.levels)}, starting_stack = ${f.starting_stack},
+      is_default = ${f.is_default}, updated_at = now()
+    WHERE id = ${id}`;
+}
+
+/** Снимает отметку «базовый» со всех шаблонов, кроме `exceptId`. */
+export async function clearDefaultBlindTemplate(exceptId: number | null): Promise<void> {
+  await db()`
+    UPDATE blind_templates SET is_default = false, updated_at = now()
+    WHERE is_default AND id IS DISTINCT FROM ${exceptId}`;
+}
+
+export async function deleteBlindTemplate(id: number): Promise<boolean> {
+  const rows = await db()`DELETE FROM blind_templates WHERE id = ${id} RETURNING id`;
+  return rows.length > 0;
+}

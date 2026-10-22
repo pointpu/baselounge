@@ -7,6 +7,7 @@
 import type {
   AdminRegistration,
   BlindLevel,
+  BlindTemplate,
   Bullet,
   ClockAction,
   GameType,
@@ -60,8 +61,10 @@ import {
   sameLevels,
   sameMinute,
   scheduleError,
+  shortDuration,
   sortOffsets,
   stackError,
+  structureMinutes,
 } from '../../shared/rules.ts';
 import type { TimeFormat } from '../../shared/rules.ts';
 import { avatar, blindsText, clockWidget, statusBadge, tournamentCard } from '../widgets.ts';
@@ -199,6 +202,90 @@ function niceRound(n: number): number {
   return Math.max(step, Math.round(n / step) * step);
 }
 
+/* ───────────────────────── Шаблоны структуры ───────────────────────── */
+
+const TEMPLATE_NAME_MAX = 40;
+
+/** Кэш списка шаблонов на время сессии (форма и список админки читают один запрос). */
+let templatesCache: Promise<BlindTemplate[]> | null = null;
+
+function loadTemplates(force = false): Promise<BlindTemplate[]> {
+  if (force || !templatesCache) {
+    const request = api.admin.templates();
+    templatesCache = request;
+    request.catch(() => {
+      if (templatesCache === request) templatesCache = null;
+    });
+  }
+  return templatesCache;
+}
+
+/** «19 ур. · 6 ч 20 мин» — игровые уровни и общая длительность с перерывами. */
+function templateSummary(levels: readonly BlindLevel[]): string {
+  const n = levels.filter((l) => !l.isBreak).length;
+  return `${n} ур. · ${shortDuration(structureMinutes(levels))}`;
+}
+
+function templateLabel(t: BlindTemplate): string {
+  return t.isDefault ? `★ ${t.name}` : t.name;
+}
+
+interface SaveTemplateOptions {
+  /** Проверка структуры перед отправкой: текст ошибки или null. */
+  check(): string | null;
+  save(name: string, isDefault: boolean): Promise<BlindTemplate>;
+  onSaved?(t: BlindTemplate): void;
+}
+
+/** Bottom sheet «Сохранить как шаблон»: название и «Сделать базовым». */
+function openSaveTemplateSheet(opts: SaveTemplateOptions): void {
+  const problem = opts.check();
+  if (problem) {
+    haptic.error();
+    toast(problem, 'error');
+    return;
+  }
+  const name = h('input', { class: 'input', required: true, maxLength: TEMPLATE_NAME_MAX, placeholder: 'Например, Пятничный дипстек' });
+  const makeDefault = h('input', { type: 'checkbox', class: 'check__input' });
+  const error = errorLine();
+  openSheet({
+    title: 'Сохранить как шаблон',
+    submitLabel: 'Сохранить шаблон',
+    content: h(
+      'div',
+      { class: 'stack' },
+      field('Название', name, `До ${TEMPLATE_NAME_MAX} символов`),
+      h('label', { class: 'check' }, makeDefault, h('span', null, 'Сделать базовым'), h('span', { class: 'check__hint' }, 'с него начнётся новый турнир')),
+      error,
+    ),
+    onSubmit: async () => {
+      const value = name.value.trim();
+      if (!value || value.length > TEMPLATE_NAME_MAX) return fail(error, `Название — от 1 до ${TEMPLATE_NAME_MAX} символов`) ?? false;
+      const again = opts.check();
+      if (again) return fail(error, again) ?? false;
+      try {
+        const saved = await opts.save(value, makeDefault.checked);
+        templatesCache = null;
+        haptic.success();
+        toast(`Шаблон «${saved.name}» сохранён`, 'success');
+        opts.onSaved?.(saved);
+        return true;
+      } catch (e) {
+        haptic.error();
+        showError(error, errorMessage(e));
+        return false;
+      }
+    },
+  });
+  name.focus();
+}
+
+/** Ошибка структуры для шаблона (те же правила, что на сервере) или null. */
+function templateStructureError(levels: readonly BlindLevel[], startingStack: number | null): string | null {
+  if (!levels.length) return 'Структура пуста — добавьте уровни';
+  return levelsError(levels) ?? stackError({ startingStack, levels, reentries: [], addons: [] });
+}
+
 /* ───────────────────────── Редактор уровней блайндов ───────────────────────── */
 
 interface Editor<T> {
@@ -212,7 +299,16 @@ interface LevelsEditor extends Editor<BlindLevel> {
   peek(): BlindLevel[];
 }
 
-function blindLevelsEditor(initial: readonly BlindLevel[], onChange: () => void = () => {}): LevelsEditor {
+interface LevelsEditorOptions {
+  onChange?: () => void;
+  /** Стартовый стек из формы — сохраняется в шаблон. */
+  getStack?: () => number | null;
+  /** Подставить стек шаблона в форму. */
+  setStack?: (stack: number) => void;
+}
+
+function blindLevelsEditor(initial: readonly BlindLevel[], options: LevelsEditorOptions = {}): LevelsEditor {
+  const onChange = options.onChange ?? ((): void => {});
   interface Row {
     el: HTMLElement;
     isBreak: boolean;
@@ -380,6 +476,56 @@ function blindLevelsEditor(initial: readonly BlindLevel[], onChange: () => void 
   };
   presetButtons.push(h('button', { type: 'button', class: 'btn btn--soft btn--sm', on: { click: applyBbAnte } }, 'BB-анте'));
 
+  /* Шаблоны: строка сохранённых структур (★ — базовый) и «Сохранить как шаблон». */
+  const templateRow = h('div', { class: 'pick-row editor__templates-row' });
+  const templateHint = h('p', { class: 'field__hint' }, 'Сохраните структуру, чтобы применять её в один тап.');
+  const applyTemplate = async (t: BlindTemplate): Promise<void> => {
+    if (rows.length && !(await confirmDialog(`Заменить структуру шаблоном «${t.name}»?`))) return;
+    setAll(t.levels);
+    if (t.startingStack !== null) options.setStack?.(t.startingStack);
+    // Шаблон из старых данных мог перестать проходить текущие правила — сразу говорим, что поправить.
+    const problem = templateStructureError(t.levels, t.startingStack ?? options.getStack?.() ?? null);
+    if (problem) {
+      haptic.error();
+      toast(`Шаблон «${t.name}» нужно поправить: ${problem}`, 'error');
+      return;
+    }
+    haptic.select();
+    toast(`Структура из шаблона «${t.name}»`, 'success');
+  };
+  const drawTemplates = (list: readonly BlindTemplate[]): void => {
+    templateRow.hidden = !list.length;
+    templateHint.hidden = list.length > 0;
+    setChildren(
+      templateRow,
+      list.map((t) =>
+        h('button', { type: 'button', class: 'pick editor__template', title: t.name, on: { click: () => void applyTemplate(t) } }, templateLabel(t)),
+      ),
+    );
+  };
+  const refreshTemplates = (force = false): void => {
+    loadTemplates(force)
+      .then(drawTemplates)
+      .catch(() => {
+        templateHint.textContent = 'Не удалось загрузить шаблоны.';
+      });
+  };
+  const saveTemplate = (): void => {
+    let levels: BlindLevel[] = [];
+    const stackNow = (): number | null => options.getStack?.() ?? null;
+    openSaveTemplateSheet({
+      check: () => {
+        const lv = readLevels();
+        if (typeof lv === 'string') return lv;
+        levels = lv;
+        return templateStructureError(lv, stackNow());
+      },
+      save: (name, isDefault) => api.admin.createTemplate({ name, levels, startingStack: stackNow(), isDefault }),
+      onSaved: () => refreshTemplates(true),
+    });
+  };
+  templateRow.hidden = true;
+
   setAll(initial);
 
   const el = h(
@@ -391,6 +537,18 @@ function blindLevelsEditor(initial: readonly BlindLevel[], onChange: () => void 
       h('span', { class: 'field__label' }, 'Пресеты'),
       presetButtons,
       h('p', { class: 'field__hint editor__presets-hint' }, 'Турбо — по 10 мин, Стандарт — по 20 мин, BB‑анте — анте = BB с выбранного уровня.'),
+    ),
+    h(
+      'div',
+      { class: 'editor__templates' },
+      h(
+        'div',
+        { class: 'editor__templates-head' },
+        h('span', { class: 'field__label' }, 'Шаблоны'),
+        h('button', { type: 'button', class: 'btn btn--ghost btn--sm editor__save-template', on: { click: saveTemplate } }, h('span', { attrs: { 'aria-hidden': 'true' } }, '💾'), 'Сохранить как шаблон'),
+      ),
+      templateRow,
+      templateHint,
     ),
     h(
       'div',
@@ -412,32 +570,37 @@ function blindLevelsEditor(initial: readonly BlindLevel[], onChange: () => void 
     ),
   );
 
+  refreshTemplates();
+
   return {
     el,
     peek() {
       return rows.map((r) => ({ sb: 0, bb: 0, ante: 0, minutes: intOf(r.minutes) ?? 0, isBreak: r.isBreak }));
     },
-    read() {
-      const out: BlindLevel[] = [];
-      let n = 0;
-      for (const row of rows) {
-        const minutes = intOf(row.minutes);
-        if (minutes === null || minutes < 1 || minutes > 240) return 'Длительность уровня — от 1 до 240 минут';
-        if (row.isBreak) {
-          out.push({ sb: 0, bb: 0, ante: 0, minutes, isBreak: true });
-          continue;
-        }
-        n += 1;
-        const sb = intOf(row.sb);
-        const bb = intOf(row.bb);
-        const ante = intOf(row.ante) ?? 0;
-        if (sb === null || bb === null || sb < 0 || bb <= 0 || ante < 0) return `Уровень ${n}: укажите блайнды`;
-        out.push({ sb, bb, ante, minutes, isBreak: false });
-      }
-      // Логика структуры (рост блайндов, анте, перерывы) проверяется при сохранении — общими правилами.
-      return out;
-    },
+    read: readLevels,
   };
+
+  /** Значения уровней или текст ошибки (вызывается и из «Сохранить как шаблон»). */
+  function readLevels(): BlindLevel[] | string {
+    const out: BlindLevel[] = [];
+    let n = 0;
+    for (const row of rows) {
+      const minutes = intOf(row.minutes);
+      if (minutes === null || minutes < 1 || minutes > 240) return 'Длительность уровня — от 1 до 240 минут';
+      if (row.isBreak) {
+        out.push({ sb: 0, bb: 0, ante: 0, minutes, isBreak: true });
+        continue;
+      }
+      n += 1;
+      const sb = intOf(row.sb);
+      const bb = intOf(row.bb);
+      const ante = intOf(row.ante) ?? 0;
+      if (sb === null || bb === null || sb < 0 || bb <= 0 || ante < 0) return `Уровень ${n}: укажите блайнды`;
+      out.push({ sb, bb, ante, minutes, isBreak: false });
+    }
+    // Логика структуры (рост блайндов, анте, перерывы) проверяется при сохранении — общими правилами.
+    return out;
+  }
 }
 
 /* ───────────────────────── Редактор ре-энтри / add-on ───────────────────────── */
@@ -874,13 +1037,23 @@ interface TournamentForm {
   submit(): void;
 }
 
-function tournamentForm(initial: TournamentDetail | null, save: (input: TournamentInput) => Promise<void>): TournamentForm {
+/** Начальная структура нового турнира (из базового шаблона). */
+interface FormDefaults {
+  levels: BlindLevel[];
+  startingStack: number | null;
+}
+
+function tournamentForm(
+  initial: TournamentDetail | null,
+  save: (input: TournamentInput) => Promise<void>,
+  defaults: FormDefaults | null = null,
+): TournamentForm {
   const title = h('input', { class: 'input', value: initial?.title ?? '', required: true, minLength: 2, maxLength: 80, placeholder: 'Например, Friday Deepstack' });
   const subtitle = h('input', { class: 'input', value: initial?.subtitle ?? '', maxLength: 120, placeholder: 'Короткая строка под названием' });
   const description = h('textarea', { class: 'input textarea', value: initial?.description ?? '', maxLength: 4000, rows: 4, placeholder: 'Правила, адрес, что взять с собой' });
   const capacity = numInput(initial?.capacity ?? 27, { min: 2, max: 1000, required: true });
   const buyIn = numInput(initial?.buyIn ?? 0, { min: 0, max: 10_000_000, required: true });
-  const stack = numInput(initial?.startingStack ?? 20_000, { min: 1, placeholder: 'Не указан' });
+  const stack = numInput(initial ? initial.startingStack : (defaults?.startingStack ?? 20_000), { min: 1, placeholder: 'Не указан' });
   const koPoints = numInput(initial?.knockoutPoints ?? 0, { min: 0, max: 1000 });
   const tableSize = numInput(initial?.tableSize ?? 9, { min: 2, max: 10, required: true });
   const dealer = h('input', { class: 'input', value: initial?.dealer ?? '', maxLength: 80, placeholder: 'Например, Анна' });
@@ -913,7 +1086,13 @@ function tournamentForm(initial: TournamentDetail | null, save: (input: Tourname
   // Предупреждать о прошлом, только пока турнир не начался (идущему/завершённому прошлое нормально).
   const notStarted = !initial || initial.status === 'draft' || initial.status === 'registration';
   const start = startPicker(initial?.startsAt ?? null, notStarted, refreshLate);
-  const levels = blindLevelsEditor(initial?.blindLevels ?? preset(20, 4, 10), refreshLate);
+  const levels = blindLevelsEditor(initial?.blindLevels ?? defaults?.levels ?? preset(20, 4, 10), {
+    onChange: refreshLate,
+    getStack: () => intOf(stack),
+    setStack: (value) => {
+      stack.value = String(value);
+    },
+  });
   lateReg = lateRegPicker(initial?.lateRegUntil ?? null, initial?.startsAt ?? null, start.value, () => levels.peek());
   const reentries = bulletsEditor(initial?.reentries ?? [], 'ре-энтри');
   const addons = bulletsEditor(initial?.addons ?? [], 'add-on');
@@ -1070,7 +1249,9 @@ function adminCard(card: TournamentCard): HTMLElement {
 async function listScreen(root: HTMLElement): Promise<void> {
   const newButton = h('a', { class: 'btn btn--primary btn--block', href: '#/admin/new' }, icon('plus', 20), 'Новый турнир');
   const content = h('div', { class: 'stack stack--lg' }, skeleton(4, 92));
-  setChildren(root, h('h1', { class: 'page-title' }, 'Админ'), h('p', { class: 'page-sub' }, 'Турниры клуба, все статусы'), newButton, content);
+  const templates = h('section', { class: 'admin-templates' });
+  setChildren(root, h('h1', { class: 'page-title' }, 'Админ'), h('p', { class: 'page-sub' }, 'Турниры клуба, все статусы'), newButton, content, templates);
+  void templatesSection(templates);
 
   let items: TournamentCard[];
   try {
@@ -1098,15 +1279,158 @@ async function listScreen(root: HTMLElement): Promise<void> {
   );
 }
 
+/* ───────────────────────── Шаблоны структур (список) ───────────────────────── */
+
+/** Секция «Шаблоны структур» на `#/admin`: базовый, переименование, удаление. */
+async function templatesSection(el: HTMLElement, force = true): Promise<void> {
+  const title = (n?: number): HTMLElement => sectionTitle(n === undefined ? 'Шаблоны структур' : `Шаблоны структур · ${n}`);
+  if (force) setChildren(el, title(), skeleton(2, 56));
+  let list: BlindTemplate[];
+  try {
+    list = await loadTemplates(force);
+  } catch (error) {
+    if (el.isConnected) setChildren(el, title(), h('p', { class: 'muted' }, errorMessage(error)));
+    return;
+  }
+  if (!el.isConnected) return;
+  const redraw = (): void => void templatesSection(el);
+  setChildren(
+    el,
+    title(list.length),
+    list.length
+      ? h('div', { class: 'card tpl-list' }, list.map((t) => templateRow(t, redraw)))
+      : h('p', { class: 'muted' }, 'Шаблонов пока нет. В форме турнира — «💾 Сохранить как шаблон».'),
+  );
+}
+
+function templateRow(t: BlindTemplate, redraw: () => void): HTMLElement {
+  const meta = templateSummary(t.levels) + (t.startingStack !== null ? ` · стек ${fmtNum(t.startingStack)}` : '');
+  return h(
+    'div',
+    { class: 'tpl' },
+    h(
+      'div',
+      { class: 'tpl__main' },
+      h('span', { class: 'tpl__name', title: t.name }, templateLabel(t)),
+      h('span', { class: 'tpl__meta tabular' }, meta),
+    ),
+    h(
+      'button',
+      { type: 'button', class: 'icon-btn icon-btn--sm', ariaLabel: `Действия с шаблоном «${t.name}»`, on: { click: () => templateActions(t, redraw) } },
+      icon('edit', 18),
+    ),
+  );
+}
+
+/** Шторка действий с шаблоном. */
+function templateActions(t: BlindTemplate, redraw: () => void): void {
+  const run = async (call: () => Promise<unknown>, message: string): Promise<void> => {
+    try {
+      await call();
+      templatesCache = null;
+      haptic.success();
+      toast(message, 'success');
+      redraw();
+    } catch (error) {
+      haptic.error();
+      toast(errorMessage(error), 'error');
+    }
+  };
+  const sheet = openSheet({
+    title: templateLabel(t),
+    content: h(
+      'div',
+      { class: 'stack tpl-actions' },
+      h('p', { class: 'muted tabular' }, templateSummary(t.levels) + (t.startingStack !== null ? ` · стек ${fmtNum(t.startingStack)}` : '')),
+      t.isDefault
+        ? h('p', { class: 'field__hint' }, 'Базовый шаблон — с него начинается новый турнир.')
+        : actionButton('★ Сделать базовым', async () => {
+            sheet.close();
+            await run(() => api.admin.updateTemplate(t.id, { isDefault: true }), `«${t.name}» — базовый шаблон`);
+          }),
+      h(
+        'button',
+        {
+          type: 'button',
+          class: 'btn btn--soft btn--nowrap',
+          on: {
+            click: () => {
+              sheet.close();
+              renameTemplate(t, redraw);
+            },
+          },
+        },
+        icon('edit', 20),
+        'Переименовать',
+      ),
+      actionButton(
+        'Удалить',
+        async () => {
+          haptic.warning();
+          if (!(await confirmDialog(`Удалить шаблон «${t.name}»? Турниры, созданные по нему, не изменятся.`))) return;
+          sheet.close();
+          await run(() => api.admin.deleteTemplate(t.id), 'Шаблон удалён');
+        },
+        { tone: 'danger', iconName: 'close' },
+      ),
+    ),
+  });
+}
+
+/** Шторка переименования: ошибка (например, имя занято) остаётся в шторке. */
+function renameTemplate(t: BlindTemplate, onDone: () => void): void {
+  const name = h('input', { class: 'input', required: true, maxLength: TEMPLATE_NAME_MAX, value: t.name });
+  const error = errorLine();
+  openSheet({
+    title: 'Переименовать шаблон',
+    content: h('div', { class: 'stack' }, field('Название', name, `До ${TEMPLATE_NAME_MAX} символов`), error),
+    onSubmit: async () => {
+      const value = name.value.trim();
+      if (!value || value.length > TEMPLATE_NAME_MAX) return fail(error, `Название — от 1 до ${TEMPLATE_NAME_MAX} символов`) ?? false;
+      if (value === t.name) return true;
+      try {
+        await api.admin.updateTemplate(t.id, { name: value });
+      } catch (e) {
+        haptic.error();
+        showError(error, errorMessage(e));
+        return false;
+      }
+      templatesCache = null;
+      haptic.success();
+      toast('Шаблон переименован', 'success');
+      onDone();
+      return true;
+    },
+  });
+  name.select();
+}
+
 /* ───────────────────────── Создание ───────────────────────── */
 
-function newScreen(root: HTMLElement): Cleanup {
-  const form = tournamentForm(null, async (input) => {
-    const created = await api.admin.create(input);
-    toast(input.status === 'registration' ? 'Турнир создан, регистрация открыта' : 'Черновик сохранён', 'success');
-    window.location.replace(`#/admin/t/${created.id}`);
-  });
-  setChildren(root, h('h1', { class: 'page-title' }, 'Новый турнир'), form.el);
+async function newScreen(root: HTMLElement): Promise<Cleanup | void> {
+  const heading = h('h1', { class: 'page-title' }, 'Новый турнир');
+  setChildren(root, heading, skeleton(3, 120));
+  // Базовый шаблон — начальная структура; без него (или если список не загрузился) — пресет «Стандарт».
+  const templates = await loadTemplates(true).catch((): BlindTemplate[] => []);
+  if (!root.isConnected) return;
+  const base = templates.find((t) => t.isDefault) ?? null;
+  const baseProblem = base ? templateStructureError(base.levels, base.startingStack) : null;
+  const form = tournamentForm(
+    null,
+    async (input) => {
+      const created = await api.admin.create(input);
+      toast(input.status === 'registration' ? 'Турнир создан, регистрация открыта' : 'Черновик сохранён', 'success');
+      window.location.replace(`#/admin/t/${created.id}`);
+    },
+    base ? { levels: base.levels, startingStack: base.startingStack } : null,
+  );
+  setChildren(
+    root,
+    heading,
+    base ? h('p', { class: 'page-sub' }, `Структура — из базового шаблона «${base.name}»`) : null,
+    baseProblem ? h('p', { class: 'field__error' }, `Структура шаблона не проходит проверку: ${baseProblem}`) : null,
+    form.el,
+  );
   setMainAction({ text: 'Создать турнир', onClick: () => form.submit() });
   return () => setMainAction(null);
 }
@@ -1457,11 +1781,21 @@ function blindsPreview(d: TournamentDetail): HTMLElement | null {
   if (!playable.length) return null;
   const first = playable[0];
   const last = playable[playable.length - 1];
+  const saveAsTemplate = (): void =>
+    openSaveTemplateSheet({
+      check: () => templateStructureError(d.blindLevels, d.startingStack),
+      save: (name, isDefault) => api.admin.createTemplate({ name, fromTournamentId: d.id, isDefault }),
+    });
   return h(
-    'p',
-    { class: 'muted tabular' },
-    `Структура: ${playable.length} ${plural(playable.length, 'уровень', 'уровня', 'уровней')}`,
-    first && last ? ` · ${blindsText(first)} → ${blindsText(last)}` : null,
+    'section',
+    { class: 'stack' },
+    h(
+      'p',
+      { class: 'muted tabular' },
+      `Структура: ${playable.length} ${plural(playable.length, 'уровень', 'уровня', 'уровней')}`,
+      first && last ? ` · ${blindsText(first)} → ${blindsText(last)}` : null,
+    ),
+    h('button', { type: 'button', class: 'btn btn--ghost btn--nowrap', on: { click: saveAsTemplate } }, h('span', { attrs: { 'aria-hidden': 'true' } }, '💾'), 'Сохранить структуру как шаблон'),
   );
 }
 

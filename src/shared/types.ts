@@ -202,6 +202,35 @@ export interface TournamentInput {
   announce?: boolean;
 }
 
+/** Шаблон структуры блайндов (админка). */
+export interface BlindTemplate {
+  id: number;
+  /** 1..40 символов, уникально без учёта регистра. */
+  name: string;
+  /** Непустая структура, проходит `levelsError`. */
+  levels: BlindLevel[];
+  /** Стартовый стек, который подставляется вместе со структурой; null — не менять. */
+  startingStack: number | null;
+  /** Базовый шаблон — с него начинается форма нового турнира (не больше одного). */
+  isDefault: boolean;
+  updatedAt: string;
+}
+
+/** POST /api/admin/blind-templates (или PATCH — любое подмножество полей). */
+export interface BlindTemplateInput {
+  name: string;
+  levels: BlindLevel[];
+  startingStack?: number | null;
+  isDefault?: boolean;
+}
+
+/** POST /api/admin/blind-templates: шаблон из структуры существующего турнира. */
+export interface BlindTemplateFromTournament {
+  name: string;
+  fromTournamentId: number;
+  isDefault?: boolean;
+}
+
 /** POST /api/admin/tournaments/:id/status. */
 export interface StatusChangeInput {
   status: TournamentStatus;

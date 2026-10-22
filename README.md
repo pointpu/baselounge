@@ -87,6 +87,7 @@ Mini App: <http://localhost:5173/?dev_user=1>. Проверка типов: `npm
 | `migrate` | goose поверх `DATABASE_URL`: `up` по умолчанию, `-- status`, `-- down` |
 | `seed` | демо-данные; **стирает все турниры** — не для продакшена |
 | `import:sqlite` | разовый перенос из старой SQLite-базы |
+| `template:from-tournament` | шаблон структуры блайндов из турнира: `-- <id> <название> [--default]` |
 | `typecheck` | `tsc --noEmit` |
 
 Все скрипты читают `.env` (`node --env-file-if-exists=.env`).
@@ -208,6 +209,22 @@ node --env-file-if-exists=.env src/server/import-avatars.ts [папка меди
 Порядок: остановить старый сервер → копия `data/showdown.db` → `npm run migrate` →
 `npm run import:sqlite` → `import-avatars.ts` → запустить сервер.
 
+## Шаблоны структуры блайндов
+
+Админ сохраняет структуру турнира как шаблон («💾 Сохранить как шаблон» в редакторе структуры или
+«Сохранить структуру как шаблон» на экране турнира) и применяет её одним тапом в строке «Шаблоны».
+Базовый шаблон (★, не больше одного) — начальная структура нового турнира. Список, переименование
+и удаление — в разделе «Шаблоны структур» на главной админки.
+
+Первый базовый шаблон удобно сделать из уже проведённого турнира:
+
+```bash
+npm run template:from-tournament -- 1 Базовая --default                 # локально
+cd /app && node src/server/template-from-tournament.ts 1 Базовая --default   # в продакшн-контейнере (npm там нет)
+```
+
+Копируются уровни и стартовый стек турнира; если шаблон с таким названием уже есть — он обновляется.
+
 ## Деплой
 
 Продакшн — Kubernetes, Helm-чарт `deploy/helm/baselounge`; подробно — в
@@ -235,10 +252,11 @@ src/
     seed.ts             # демо-данные (стирает турниры)
     import-sqlite.ts    # разовый перенос из SQLite
     import-avatars.ts   # разовый перенос файлов-аватаров в таблицу avatars
+    template-from-tournament.ts # шаблон структуры блайндов из турнира
     auth.ts             # проверка initData Telegram, DEV_MODE
     http.ts             # ошибки, security-заголовки, валидация
     time.ts             # даты, сезон (месяц в CLUB_TZ)
-    services/           # турниры, лист ожидания, часы, рассадка, очки, рейтинг, игроки, .ics
+    services/           # турниры, лист ожидания, часы, рассадка, очки, рейтинг, игроки, шаблоны структур, .ics
     routes/             # public.ts (/api/...), admin.ts (/api/admin/...)
     bot/                # grammY: команды, уведомления, напоминания, тексты
   webapp/               # Mini App: vanilla TS + Vite, hash-роутер, views/*
@@ -271,6 +289,8 @@ docker-compose.yml      # локальный PostgreSQL 17
 | POST | `/api/admin/tournaments/:id/seating` | авторассадка `{ tableSize: 6..10 }` |
 | POST | `/api/admin/tournaments/:id/clock` | часы `{ action: start\|pause\|resume\|reset }` |
 | PUT | `/api/admin/tournaments/:id/results` | результаты `{ entries: [{ playerId, place, knockouts }] }` |
+| GET / POST | `/api/admin/blind-templates` | шаблоны структур / создать (`{ name, levels, startingStack?, isDefault? }` или `{ name, fromTournamentId }`) |
+| PATCH / DELETE | `/api/admin/blind-templates/:id` | переименовать, сделать базовым, изменить / удалить |
 
 `GET /media/avatars/<имя>` — аватар из базы. `GET /healthz` → `{ "ok": true }` (503, если база недоступна).
 

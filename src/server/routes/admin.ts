@@ -3,7 +3,7 @@
  */
 import { Hono } from 'hono';
 import { z } from 'zod';
-import type { AdminRegistration, TournamentCard, TournamentDetail } from '../../shared/types.ts';
+import type { AdminRegistration, BlindTemplate, TournamentCard, TournamentDetail } from '../../shared/types.ts';
 import { requireAdmin, requireAuth } from '../auth.ts';
 import { type AppEnv, jsonBody, parseInput } from '../http.ts';
 import {
@@ -17,6 +17,7 @@ import {
   seatPlayers,
   updateTournament,
 } from '../services/tournaments.ts';
+import { createFromTournament, createTemplate, deleteTemplate, listTemplates, updateTemplate } from '../services/templates.ts';
 import { IdParam } from './public.ts';
 
 const isoDate = z.iso.datetime({ offset: true, message: 'Ожидается дата в формате ISO 8601' });
@@ -57,6 +58,27 @@ const TournamentInputSchema = z.object({
   reminderOffsets: z.array(z.number().int()).max(20).optional(),
   status: z.enum(['draft', 'registration']).optional(),
   announce: z.boolean().optional(),
+});
+
+// Шаблоны структуры блайндов. Смысловые правила (структура, стек, уникальность имени) — в services/templates.ts.
+const TemplateName = z.string().max(200, 'Название шаблона — не длиннее 40 символов');
+const TemplateLevels = z.array(BlindLevelSchema).min(1, 'В шаблоне должен быть хотя бы один уровень').max(100, 'Не больше 100 уровней');
+const TemplateInputSchema = z.strictObject({
+  name: TemplateName,
+  levels: TemplateLevels,
+  startingStack: chips.nullable().optional(),
+  isDefault: z.boolean().optional(),
+});
+const TemplateFromTournamentSchema = z.strictObject({
+  name: TemplateName,
+  fromTournamentId: z.number().int().positive('Укажите турнир'),
+  isDefault: z.boolean().optional(),
+});
+const TemplatePatchSchema = z.strictObject({
+  name: TemplateName.optional(),
+  levels: TemplateLevels.optional(),
+  startingStack: chips.nullable().optional(),
+  isDefault: z.boolean().optional(),
 });
 
 const StatusBody = z.object({
@@ -122,4 +144,27 @@ adminApi.put('/tournaments/:id/results', async (c) => {
   const { id } = parseInput(IdParam, c.req.param());
   const { entries } = parseInput(ResultsBody, await jsonBody(c));
   return c.json<TournamentDetail>(await buildDetail(await publishResults(id, entries), c.get('player'), true));
+});
+
+adminApi.get('/blind-templates', async (c) => c.json<BlindTemplate[]>(await listTemplates()));
+
+adminApi.post('/blind-templates', async (c) => {
+  const body = await jsonBody(c);
+  if (body && typeof body === 'object' && 'fromTournamentId' in body) {
+    const { name, fromTournamentId, isDefault } = parseInput(TemplateFromTournamentSchema, body);
+    const { template } = await createFromTournament(fromTournamentId, name, isDefault ?? false);
+    return c.json<BlindTemplate>(template, 201);
+  }
+  return c.json<BlindTemplate>(await createTemplate(parseInput(TemplateInputSchema, body)), 201);
+});
+
+adminApi.patch('/blind-templates/:id', async (c) => {
+  const { id } = parseInput(IdParam, c.req.param());
+  return c.json<BlindTemplate>(await updateTemplate(id, parseInput(TemplatePatchSchema, await jsonBody(c))));
+});
+
+adminApi.delete('/blind-templates/:id', async (c) => {
+  const { id } = parseInput(IdParam, c.req.param());
+  await deleteTemplate(id);
+  return c.body(null, 204);
 });

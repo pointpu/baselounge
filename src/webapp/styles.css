@@ -3152,3 +3152,97 @@ a.link-row:active {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+/* ───────────────────────── Шаблоны структуры блайндов ───────────────────────── */
+
+/* Текст кнопки не переносится ни при какой ширине. */
+.btn--nowrap,
+.tpl-actions .btn {
+  white-space: nowrap;
+}
+
+.editor__templates {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.editor__templates-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.editor__templates-head > .field__label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.editor__save-template {
+  flex: none;
+  white-space: nowrap;
+}
+
+/* Строка шаблонов — одна линия, прокручивается по горизонтали. */
+.editor__template {
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: inline-block;
+  line-height: 38px;
+}
+
+.tpl-list {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.tpl {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 56px;
+  padding: var(--space-2) var(--space-2) var(--space-2) var(--space-4);
+}
+
+.tpl + .tpl {
+  border-top: 1px solid var(--line);
+}
+
+.tpl__main {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.tpl__name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+}
+
+.tpl__meta {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--hint);
+  font-size: 13px;
+}
+
+/* Совсем узкие экраны (320 px): без иконки, чтобы «Сохранить как шаблон» влезал в одну строку. */
+@media (max-width: 360px) {
+  .editor__save-template > [aria-hidden='true'] {
+    display: none;
+  }
+
+  .editor__save-template {
+    padding: 0 var(--space-2);
+  }
+}

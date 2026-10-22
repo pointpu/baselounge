@@ -4,6 +4,9 @@
  */
 import type {
   AdminRegistration,
+  BlindTemplate,
+  BlindTemplateFromTournament,
+  BlindTemplateInput,
   ClockAction,
   Leaderboard,
   LeaderboardPeriod,
@@ -141,6 +144,13 @@ export const api = {
       request<TournamentDetail>('POST', `/api/admin/tournaments/${id}/clock`, { action }),
     results: (id: number, entries: ResultEntryInput[]) =>
       request<TournamentDetail>('PUT', `/api/admin/tournaments/${id}/results`, { entries }),
+
+    templates: () => get<BlindTemplate[]>('/api/admin/blind-templates'),
+    createTemplate: (input: BlindTemplateInput | BlindTemplateFromTournament) =>
+      request<BlindTemplate>('POST', '/api/admin/blind-templates', input),
+    updateTemplate: (id: number, patch: Partial<BlindTemplateInput>) =>
+      request<BlindTemplate>('PATCH', `/api/admin/blind-templates/${id}`, patch),
+    deleteTemplate: (id: number) => request<void>('DELETE', `/api/admin/blind-templates/${id}`),
   },
 };
 

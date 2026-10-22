@@ -175,6 +175,11 @@ results(id identity PK, tournament_id FK CASCADE, player_id FK CASCADE, place in
         knockouts integer DEFAULT 0, points integer,
         UNIQUE(tournament_id, player_id), UNIQUE(tournament_id, place))
   INDEX (player_id)
+
+-- migration 005 (005_blind_templates.sql):
+blind_templates(id identity PK, name text CHECK length 1..40, levels jsonb (непустой массив BlindLevel),
+        starting_stack integer NULL CHECK > 0, is_default boolean DEFAULT false, created_at, updated_at timestamptz)
+  UNIQUE INDEX (lower(name)), UNIQUE INDEX (is_default) WHERE is_default   -- базовый — не больше одного
 ```
 Порядок в листе ожидания — по `(updated_at, id)` перехода в waitlist (FIFO).
 
@@ -300,6 +305,25 @@ interface ApiError { error: string }
 - `POST   /api/admin/tournaments/:id/clock` `{ action: 'start'|'pause'|'resume'|'reset' }` → `TournamentDetail`
 - `PUT    /api/admin/tournaments/:id/results` `{ entries: { playerId, place, knockouts }[] }` — места уникальны 1..n,
   игроки зарегистрированы; очки считаются; status=completed; results_published_at=now; уведомления → `TournamentDetail`
+- `GET    /api/admin/blind-templates` → `BlindTemplate[]` (базовый первым, затем по имени)
+- `POST   /api/admin/blind-templates` `BlindTemplateInput` или `{ name, fromTournamentId, isDefault? }` (копия
+  blind_levels + starting_stack турнира) → `BlindTemplate` (201)
+- `PATCH  /api/admin/blind-templates/:id` `Partial<BlindTemplateInput>` (`isDefault: true` — сделать базовым) → `BlindTemplate`
+- `DELETE /api/admin/blind-templates/:id` → 204
+
+### Шаблоны структуры блайндов (`services/templates.ts`)
+
+`BlindTemplate { id, name, levels, startingStack: number | null, isDefault, updatedAt }`.
+Правила: имя — trim, 1..40, уникально без учёта регистра (409 «Шаблон с таким названием уже есть»); структура
+непустая, `levelsError` = null; стек > BB первого игрового уровня (`stackError`); не больше 50 шаблонов (409).
+Шаблон из старых данных, не проходящий текущие правила, нельзя сделать базовым (400); при применении в форме — тост-ошибка с причиной.
+Изменения — в `tx()` под `pg_advisory_xact_lock` (`repo.lockBlindTemplates`); новый базовый снимает отметку
+с прежнего в той же транзакции. Mini App: строка «Шаблоны» (★ — базовый) под пресетами в редакторе структуры
+(применение — с подтверждением, подставляет и стартовый стек), «💾 Сохранить как шаблон» (bottom sheet: название,
+«Сделать базовым»); новый турнир начинается со структуры базового шаблона (иначе — пресет «Стандарт»);
+`#/admin` — секция «Шаблоны структур» (базовый, переименовать, удалить); экран турнира — «Сохранить структуру
+как шаблон». Скрипт `template-from-tournament.ts <id> <название> [--default]` — шаблон из турнира (одноимённый
+обновляется).
 
 Статика: `/` → `dist/webapp` (SPA, index.html), `/media/avatars/<id>-<version>.<ext>` из таблицы avatars (Cache-Control immutable на год, ETag, 304; иначе 404). `GET /healthz` → `{ ok: true }`.
 Security headers: CSP `default-src 'self'; script-src 'self' https://telegram.org; img-src 'self' data: https:;
