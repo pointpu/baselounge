@@ -145,7 +145,9 @@ def list_managed(client, settings, tier):
 
 def verify_uploaded(client, settings, key, size, sha256):
     head = client.head_object(Bucket=settings.bucket, Key=key)
-    if head.get("ContentLength") != size or head.get("Metadata", {}).get("sha256") != sha256:
+    # S3 metadata header names are case-insensitive. Yandex preserves "Sha256".
+    metadata = {key.lower(): value for key, value in head.get("Metadata", {}).items()}
+    if head.get("ContentLength") != size or metadata.get("sha256") != sha256:
         raise ValueError("Uploaded backup size or checksum metadata did not match")
 
 

@@ -49,9 +49,11 @@
 ## Восстановление
 
 Скачайте выбранный `.dump` и восстановите его **в отдельную новую PostgreSQL 18**:
+задайте `PGHOST`, `PGPORT`, `PGUSER` и `PGDATABASE` новой базы в окружении.
+Пароль будет запрошен интерактивно.
 
 ```sh
-pg_restore --dbname="$RESTORE_DATABASE_URL" --no-owner --no-acl --exit-on-error backup.dump
+pg_restore --dbname="$PGDATABASE" --password --no-owner --no-acl --exit-on-error backup.dump
 ```
 
 Сверьте данные до переключения приложения на восстановленную базу.

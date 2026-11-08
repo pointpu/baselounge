@@ -103,6 +103,18 @@ class BackupTests(unittest.TestCase):
             self.run_backup()
         self.assertEqual(self.s3.deleted, [])
 
+    def test_yandex_metadata_header_casing_is_supported(self):
+        original = self.s3.head_object
+
+        def yandex_head(**kwargs):
+            head = original(**kwargs)
+            head["Metadata"] = {key.capitalize(): value for key, value in head["Metadata"].items()}
+            return head
+
+        with patch.object(self.s3, "head_object", side_effect=yandex_head):
+            self.run_backup()
+        self.assertEqual(len(self.s3.objects), 3)
+
     def test_dump_failure_never_uploads_or_deletes(self):
         old = self.s3.add("daily", 100)
         with patch.object(backup, "run_pg", side_effect=subprocess.CalledProcessError(1, "pg_dump")):
