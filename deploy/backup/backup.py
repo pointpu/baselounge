@@ -11,7 +11,7 @@ import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from urllib.parse import urlsplit
+from urllib.parse import parse_qsl, unquote, urlsplit
 
 
 RETENTION_DAYS = {"daily": 6, "weekly": 27, "monthly": 89}
@@ -70,8 +70,14 @@ def log(event, **fields):
 def sanitized_error(error, env=None):
     env = os.environ if env is None else env
     message = str(error)
+    if isinstance(error, subprocess.CalledProcessError) and error.stderr:
+        detail = error.stderr.decode("utf-8", errors="replace") if isinstance(error.stderr, bytes) else error.stderr
+        message += ": " + detail.strip()
     secrets = [value for key, value in env.items() if len(value) >= 4 and
                re.search(r"SECRET|TOKEN|PASSWORD|ACCESS_KEY|DATABASE_URL|S3_ENDPOINT", key)]
+    database = urlsplit(env.get("DATABASE_URL", ""))
+    if database.password:
+        secrets.extend([database.password, unquote(database.password)])
     for secret in sorted(secrets, key=len, reverse=True):
         message = message.replace(secret, "[redacted]")
     message = re.sub(r"\b[a-zA-Z][a-zA-Z0-9+.-]*://[^\s\"'<>]+", "[redacted-url]", message)
@@ -80,9 +86,23 @@ def sanitized_error(error, env=None):
 
 def run_pg(argv, settings, timeout):
     env = dict(os.environ)
-    # libpq accepts a PostgreSQL URI in PGDATABASE; credentials never enter argv.
-    env["PGDATABASE"] = settings.database_url
+    # Environment defaults do not expand a URI stored in PGDATABASE. Pass libpq
+    # connection fields separately, keeping the password out of process arguments.
+    database = urlsplit(settings.database_url)
+    env.update({"PGHOST": database.hostname or "localhost",
+                "PGPORT": str(database.port or 5432),
+                "PGUSER": unquote(database.username or ""),
+                "PGPASSWORD": unquote(database.password or ""),
+                "PGDATABASE": unquote(database.path.lstrip("/"))})
+    env.pop("PGSERVICE", None)
     env["PGCONNECT_TIMEOUT"] = "30"
+    parameters = {"sslmode": "PGSSLMODE", "sslrootcert": "PGSSLROOTCERT",
+                  "sslcert": "PGSSLCERT", "sslkey": "PGSSLKEY",
+                  "application_name": "PGAPPNAME", "options": "PGOPTIONS",
+                  "channel_binding": "PGCHANNELBINDING", "connect_timeout": "PGCONNECT_TIMEOUT"}
+    for key, value in parse_qsl(database.query):
+        if key in parameters:
+            env[parameters[key]] = value
     subprocess.run(argv, env=env, check=True, stdout=subprocess.PIPE,
                    stderr=subprocess.PIPE, timeout=timeout)
 

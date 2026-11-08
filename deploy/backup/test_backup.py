@@ -140,8 +140,18 @@ class BackupTests(unittest.TestCase):
         with patch.object(backup.subprocess, "run") as run:
             backup.run_pg(["pg_dump", "--format=custom"], SETTINGS, 30)
         self.assertNotIn(SETTINGS.database_url, repr(run.call_args.args))
-        self.assertEqual(run.call_args.kwargs["env"]["PGDATABASE"], SETTINGS.database_url)
+        self.assertEqual(run.call_args.kwargs["env"]["PGDATABASE"], "club")
+        self.assertEqual(run.call_args.kwargs["env"]["PGHOST"], "postgres")
+        self.assertEqual(run.call_args.kwargs["env"]["PGPASSWORD"], "private-password")
         self.assertTrue(run.call_args.kwargs["check"])
+
+    def test_pg_uri_decodes_credentials_and_preserves_sslmode(self):
+        settings = backup.Settings("postgresql://user:p%40ss%3Aword@postgres:5433/club?sslmode=require", "test")
+        with patch.object(backup.subprocess, "run") as run:
+            backup.run_pg(["pg_dump"], settings, 30)
+        env = run.call_args.kwargs["env"]
+        self.assertEqual((env["PGPORT"], env["PGPASSWORD"], env["PGSSLMODE"]),
+                         ("5433", "p@ss:word", "require"))
 
     def test_error_logging_redacts_credentials_and_urls(self):
         secret = "top-secret-key"

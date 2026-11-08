@@ -51,7 +51,7 @@
 Скачайте выбранный `.dump` и восстановите его **в отдельную новую PostgreSQL 18**:
 
 ```sh
-PGDATABASE="$RESTORE_DATABASE_URL" pg_restore --no-owner --no-acl --exit-on-error backup.dump
+pg_restore --dbname="$RESTORE_DATABASE_URL" --no-owner --no-acl --exit-on-error backup.dump
 ```
 
 Сверьте данные до переключения приложения на восстановленную базу.
