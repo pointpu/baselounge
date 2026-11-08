@@ -5,6 +5,8 @@ Telegram-бот и Mini App для покерного клуба: афиша т�
 
 Репозиторий: <https://github.com/pointpu/baselounge> · образ: `ghcr.io/pointpu/baselounge`.
 
+Развёртывание приложения и PostgreSQL в Railway: [настройки и обслуживание](deploy/railway.md).
+
 ## Возможности
 
 - **Афиша и запись**: карточки турниров, запись одной кнопкой (нативная MainButton Telegram),
